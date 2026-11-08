@@ -80,11 +80,20 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const issue = context.payload.issue;
+            // 注意：context.payload.issue 是**事件触发时**的快照。
+            // 上一步刚打的 bug 标签不在里面，所以必须重新拉一次。
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+            });
             const body = (issue.body || '').toLowerCase();
-            const isBug = issue.labels.some(l => (typeof l === 'string' ? l : l.name) === 'bug');
+            const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));
 
-            if (!isBug) return;
+            if (!names.includes('bug')) {
+              core.info(`not a bug report (labels: ${names.join(', ')}), skipping quality check`);
+              return;
+            }
 
             // 缺陷报告的最小信息集。缺什么就说缺什么，不要笼统地让人"补充细节"。
             const checks = [
