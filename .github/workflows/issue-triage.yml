@@ -27,8 +27,14 @@ jobs:
           script: |
             const issue = context.payload.issue;
             const title = issue.title || '';
-            const body = issue.body || '';
-            const text = (title + '\n' + body).toLowerCase();
+            let body = issue.body || '';
+
+            // 剔除代码块与反引号内的内容：里面是 API 名、报错、命令，
+            // 会让领域标签误判（例如 NSScrollView 命中 area/scroll）。
+            const prose = body
+              .replace(/```[\s\S]*?```/g, ' ')
+              .replace(/`[^`]*`/g, ' ');
+            const text = (title + '\n' + prose).toLowerCase();
 
             const want = new Set();
 
@@ -91,6 +97,8 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
             });
+            // 信息完整度检查要保留代码块（日志通常贴在代码块里），
+            // 所以这里用原文而不是剔除后的版本。
             const body = (issue.body || '').toLowerCase();
             const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));
 
