@@ -20,10 +20,67 @@ struct KeyStroke: Equatable {
         if f.contains(.shift)   { mods.insert(.shift) }
         if f.contains(.option)  { mods.insert(.option) }
         if f.contains(.control) { mods.insert(.control) }
+        if fnIsHeld(event)      { mods.insert(.function) }   // issue #11 第 ① 层
 
         let key = displayKey(for: event)
         guard !key.isEmpty else { return nil }
         return KeyStroke(key: key, modifiers: mods)
+    }
+
+    // MARK: fn —— 全项目唯一知道「怎么判断 fn 被按住」的地方
+
+    /// fn 是否真的被按住。**这不是 `modifierFlags.contains(.function)` 一句话的事。**
+    ///
+    /// ## 为什么不能用语义位（实测，2026-11-08，macOS 26.5 / arm64）
+    ///
+    /// AppKit 给 `NSEventModifierFlagFunction`（1 << 23）写的注释是
+    /// 「Set if any function key is pressed」——它说的是**这个键本身是不是功能键**，
+    /// 不是「fn 键被按住了」。两者在方向键 / F 键 / Home 等键上**恰好相反**的直觉：
+    ///
+    /// | 实际按的键 | `modifierFlags.contains(.function)` | `cgEvent.flags.contains(.maskSecondaryFn)` |
+    /// |---|---|---|
+    /// | 裸 ←（123）        | **true** | **false** |
+    /// | fn + ←（123）      | true     | **true**  |
+    /// | 裸 ↑（126）        | **true** | **false** |
+    /// | 裸 F5（96）        | **true** | **false** |
+    /// | 裸 A（0）          | false    | false     |
+    /// | fn + A（0）        | true     | **true**  |
+    ///
+    /// 也就是说：照 issue #11 原文的写法（`if f.contains(.function)`）会让**每一个
+    /// 裸方向键**都被标成 `fn←`——那不是修复误报，而是把误报换了个方向。
+    /// 真实的 fn 状态只存在于 `CGEvent` 的 `.maskSecondaryFn`
+    /// （`kCGEventFlagMaskSecondaryFn` = `NX_SECONDARYFNMASK` = 0x00800000，
+    /// 见 SDK `CGEventTypes.h` / `IOLLEvent.h`）。
+    ///
+    /// 同一张表也解释了为什么 `KeyStroke.from()` **不读** `.capsLock` 之外的
+    /// device-dependent 位：`NSEventModifierFlagDeviceIndependentFlagsMask` 之外的东西
+    /// 不是「用户按住的状态」，混进来就会产生假的组合。
+    ///
+    /// ## 兜底
+    ///
+    /// `event.cgEvent` 理论上总是有值，但它是一个**可能为 nil 的桥接**：拿不到时
+    /// 只能退回语义位，而语义位对功能键类恒为 true。这种情况下**宁可不标 fn**：
+    /// 漏报一个 fn 只是少显示两个字符，误报会让人去按一个不该按的组合。
+    static func fnIsHeld(_ event: NSEvent) -> Bool {
+        fnIsHeld(cgSecondaryFn: event.cgEvent?.flags.contains(.maskSecondaryFn),
+                 nsFunctionBit: event.modifierFlags.contains(.function),
+                 isFunctionKey: isFunctionKeyScan(event))
+    }
+
+    /// 纯函数版本，给单测用（真键盘事件造不出来，只能喂这三条事实）。
+    ///
+    /// 三个入参就是判断 fn 所需的**全部**信息，逻辑一点也不外泄到调用方。
+    static func fnIsHeld(cgSecondaryFn: Bool?, nsFunctionBit: Bool, isFunctionKey: Bool) -> Bool {
+        if let cgSecondaryFn { return cgSecondaryFn }
+        return nsFunctionBit && !isFunctionKey
+    }
+
+    /// 这个键是不是「功能键类」（方向键、F 键、Home/End/PageUp…）。
+    /// 判据：AppKit 把这些键的 `charactersIgnoringModifiers` 放在私用区
+    /// `NSUpArrowFunctionKey`(0xF700) … 0xF8FF（SDK `NSEvent.h`）。
+    static func isFunctionKeyScan(_ event: NSEvent) -> Bool {
+        guard let chars = event.charactersIgnoringModifiers else { return false }
+        return chars.unicodeScalars.contains { $0.value >= 0xF700 && $0.value <= 0xF8FF }
     }
 
     /// 虚拟键码就是 Carbon virtual key code，和 AX 的 `AXMenuItemCmdVirtualKey` 同域，

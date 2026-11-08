@@ -15,6 +15,19 @@ struct ShortcutModifiers: OptionSet, Hashable {
     static let option  = ShortcutModifiers(rawValue: 1 << 2)
     static let control = ShortcutModifiers(rawValue: 1 << 3)
 
+    /// fn / Globe 键（issue #11 第 ① 层）。
+    ///
+    /// **它不在 Carbon 位掩码里**：`kAXMenuItemCmdModifiers` 只有
+    /// shift(1) / option(2) / control(4) / noCommand(8) 四位（SDK
+    /// `AXAttributeConstants.h` 的 `AXMenuItemModifiers`），没有 fn。
+    /// 所以 `fromCarbon()` **永远不产出这一位**——从菜单里读到的快捷键不会有 fn，
+    /// 这一位只可能由 `KeyStroke.from(event:)` 从真实按键里读出来。
+    /// 也正因为如此，加它不会动到那 6 项位掩码测试。
+    ///
+    /// 选 `1 << 4` 而不是复用某个 Carbon 位：`rawValue` 在前八位里必须和
+    /// `fromCarbon()` 的语义一一对应，插进中间会让所有既有位错位。
+    static let function = ShortcutModifiers(rawValue: 1 << 4)
+
     /// Carbon 位掩码 → 语义修饰键。**这是全项目唯一做这件事的地方。**
     static func fromCarbon(_ raw: Int) -> ShortcutModifiers {
         var m: ShortcutModifiers = []
@@ -25,8 +38,16 @@ struct ShortcutModifiers: OptionSet, Hashable {
         return m
     }
 
+    /// 显示用符号串。顺序是产品里所有组合字符串的**唯一来源**，
+    /// 手写数据（WindowsEquivalents 表）必须照着它写，否则「看起来一样、永远匹配不上」。
+    ///
+    /// fn 排在最前（`fn⌃←`）：macOS 菜单和 Apple 官方快捷键文档都这么写
+    /// （例如 Apple《Mac window tiling icons & keyboard shortcuts》里的
+    /// "Fn-Control-Left Arrow"）。它不是 ⌃⌥⇧⌘ 那种「动作修饰键」，而是先改变
+    /// 这个键本身的含义，所以必须在最里层、最先出现。
     var symbols: String {
         var s = ""
+        if contains(.function) { s += "fn" }
         if contains(.control) { s += "⌃" }
         if contains(.option)  { s += "⌥" }
         if contains(.shift)   { s += "⇧" }

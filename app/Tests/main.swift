@@ -40,6 +40,96 @@ print("\n[修饰键符号顺序：⌃⌥⇧⌘]")
 check("全修饰键顺序", ShortcutModifiers([.command, .shift, .option, .control]).symbols == "⌃⌥⇧⌘",
       "得到 \(ShortcutModifiers([.command, .shift, .option, .control]).symbols)")
 
+// MARK: - fn 修饰键（issue #11 第 ① 层）
+
+// 这一层是**真 bug**：fn 完全没被读，于是 fn←（Home）和 ←（左移一格）被认成同一个键，
+// 吐司会显示一个**错的**动作名。issue 原话：「显示了错误的名字比不显示更让人困惑」。
+print("\n[fn 修饰键：被按住的 fn 必须参与组合]")
+
+check("fn 是独立的一位（不占用 Carbon 那四位）",
+      ShortcutModifiers.function.rawValue == 1 << 4,
+      "得到 \(ShortcutModifiers.function.rawValue)——前四位是 Carbon 位掩码的语义，不能被挤开")
+check("fn 不出现在 Carbon 解码结果里（AX 没有 fn 位）",
+      ![0, 1, 2, 4, 8, 12].contains { ShortcutModifiers.fromCarbon($0).contains(.function) },
+      "fromCarbon 产出了 fn —— AX 的 kAXMenuItemCmdModifiers 只有 4 位，这会给所有菜单项凭空加上 fn")
+check("fn⌃ 的顺序是 fn 在最前（macOS 惯例：Fn-Control-Left Arrow）",
+      ShortcutModifiers([.function, .control]).symbols == "fn⌃",
+      "得到 \(ShortcutModifiers([.function, .control]).symbols)")
+check("全修饰键 + fn：fn 在最前，其后仍是 ⌃⌥⇧⌘",
+      ShortcutModifiers([.command, .shift, .option, .control, .function]).symbols == "fn⌃⌥⇧⌘",
+      "得到 \(ShortcutModifiers([.command, .shift, .option, .control, .function]).symbols)")
+check("只有 fn 时符号是 fn（不是空串）",
+      ShortcutModifiers([.function]).symbols == "fn",
+      "得到 '\(ShortcutModifiers([.function]).symbols)'")
+
+// 核心断言：这两个必须**不相等**。相等就是 issue 描述的那个 bug 本身。
+let strokePlainArrow = KeyStroke(key: "←", modifiers: [.control])
+let strokeFnArrow    = KeyStroke(key: "←", modifiers: [.control, .function])
+check("fn⌃← 与 ⌃← 是两个不同的组合（Equatable 必须分得开）",
+      strokeFnArrow != strokePlainArrow,
+      "两者相等 —— fn 又被丢了")
+check("fn⌃← 显示成 fn⌃←",
+      strokeFnArrow.combo == "fn⌃←", "得到 \(strokeFnArrow.combo)")
+check("⌃← 仍然显示成 ⌃←（没被 fn 版污染）",
+      strokePlainArrow.combo == "⌃←", "得到 \(strokePlainArrow.combo)")
+
+// 匹配层：菜单里读出来的组合永远没有 fn，所以按 fn 组合不该命中普通组合。
+let fnAwareSnapshot = MenuInventory.Snapshot(
+    appName: "FnAware",
+    pid: 2,
+    items: [
+        ShortcutItem(title: "左移一格", menuGroup: "编辑", key: "←",
+                     modifiers: [.control], enabled: true),
+    ])
+let hitPlain = ShortcutResolver().resolve(stroke: strokePlainArrow, in: fnAwareSnapshot)
+let hitFn    = ShortcutResolver().resolve(stroke: strokeFnArrow, in: fnAwareSnapshot)
+check("⌃← 命中「左移一格」", hitPlain.action == "左移一格", "得到 \(hitPlain.action ?? "nil")")
+check("fn⌃← **不**误命中「左移一格」——宁可说未绑定，也不能报错名字",
+      hitFn.action == nil, "得到了错的名字：\(hitFn.action ?? "nil")")
+
+// MARK: - fn 的判定：真值来自 CGEvent，不来自语义位
+
+// 实测（2026-11-08，macOS 26.5 / arm64）：
+//   | 实际按的键   | modifierFlags.contains(.function) | cgEvent.flags.contains(.maskSecondaryFn) |
+//   | 裸 ←(123)    | true  ← 语义是「这是功能键类按键」 | false |
+//   | fn+←(123)    | true                            | true  |
+//   | 裸 A(0)      | false                           | false |
+// 所以 fnIsHeld 必须以 cgEvent 为准；拿语义位判断会把**每个裸方向键**标成 fn。
+print("\n[fn 的判定：cgEvent 是真值，modifierFlags.function 是陷阱]")
+
+check("cgEvent 说 fn 在按 → 就是按住",
+      KeyStroke.fnIsHeld(cgSecondaryFn: true, nsFunctionBit: true, isFunctionKey: true))
+check("cgEvent 说 fn 没按（裸方向键：语义位为 true）→ **不算** fn",
+      !KeyStroke.fnIsHeld(cgSecondaryFn: false, nsFunctionBit: true, isFunctionKey: true),
+      "把裸 ← 当成了 fn← —— 这正是 issue 里那句「显示了错误的名字」的翻版")
+check("cgEvent 说没按，普通字母键语义位也为 false → 不算 fn",
+      !KeyStroke.fnIsHeld(cgSecondaryFn: false, nsFunctionBit: false, isFunctionKey: false))
+check("cgEvent 缺失时，普通字母键的语义位可信（fn+A）",
+      KeyStroke.fnIsHeld(cgSecondaryFn: nil, nsFunctionBit: true, isFunctionKey: false))
+check("cgEvent 缺失时，功能键类的语义位不可信 → 宁可漏报也不误报",
+      !KeyStroke.fnIsHeld(cgSecondaryFn: nil, nsFunctionBit: true, isFunctionKey: true))
+
+// 端到端一小步：真的造一个 NSEvent 走 from(event:)，证明读的是 CGEvent。
+// 注意 synthesize 出来的 NSEvent 会**同时**设好语义位和 cgEvent，所以这里验的是
+// 「from() 一路读到 cgEvent」这条链，而不是验证上表（上表需要真机按键，已写在注释里）。
+func makeKeyEvent(_ code: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> NSEvent {
+    NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                     windowNumber: 0, context: nil, characters: chars,
+                     charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)!
+}
+let evPlain = makeKeyEvent(123, [], "\u{F702}")
+let evFn    = makeKeyEvent(123, [.function], "\u{F702}")
+let sPlain = KeyStroke.from(event: evPlain)
+let sFn    = KeyStroke.from(event: evFn)
+check("from(event:) 读出 ← ",
+      sPlain?.key == "←" && sPlain?.modifiers == [], "得到 \(sPlain?.combo ?? "nil")")
+check("from(event:) 读出 fn← 且与裸 ← 不同",
+      sFn?.key == "←" && sFn?.modifiers == [.function],
+      "得到 \(sFn?.combo ?? "nil")")
+check("裸 ← 不被标成 fn←（回归看门狗）",
+      sPlain?.modifiers.contains(.function) == false,
+      "得到 \(sPlain?.combo ?? "nil")")
+
 // MARK: - 虚拟键码
 
 print("\n[虚拟键码 → 显示字符]")
