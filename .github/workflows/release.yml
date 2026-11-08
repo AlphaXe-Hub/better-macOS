@@ -1,0 +1,111 @@
+name: Release
+
+# 手工触发发版：构建 → 测 → 打 DMG → （有证书时）签名 + 公证 → 传 Release。
+#
+# 设计原则：**没有证书时也要能出一个可用的 Release**，只是那个 DMG 在别人机器上
+# 需要「右键 → 打开」。把"缺证书"表现成失败，会让仓库永远发不出东西。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '版本 tag（例如 v0.1.0）'
+        required: true
+      draft:
+        description: '创建为草稿 Release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: sw_vers && uname -m && swift --version
+
+      - name: Build
+        run: ./app/build.sh release
+
+      - name: Self tests
+        run: ./app/test.sh
+
+      # 只有在配置了证书 secret 时才尝试 Developer ID 签名。
+      # 注意 --options runtime 不能省，公证要求 Hardened Runtime。
+      - name: Sign (Developer ID, 可选)
+        id: sign
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          SIGN_ID: ${{ secrets.SIGN_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUILD_CERTIFICATE_BASE64:-}" ] || [ -z "${SIGN_ID:-}" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置签名证书，产出未公证的 DMG（用户需右键打开）"
+            exit 0
+          fi
+
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          codesign --force --options runtime --timestamp \
+            --sign "$SIGN_ID" app/build/better-macOS.app
+          codesign --verify --deep --strict --verbose=2 app/build/better-macOS.app
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Make DMG
+        run: ./scripts/make-dmg.sh
+
+      - name: Notarize (可选)
+        if: steps.sign.outputs.signed == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: ./scripts/notarize.sh dist/better-macOS.dmg
+
+      - name: Checksums
+        run: |
+          cd dist && shasum -a 256 *.dmg | tee SHA256SUMS.txt
+
+      - name: Upload artifact (永远保留，便于不走 Release 时下载)
+        uses: actions/upload-artifact@v4
+        with:
+          name: better-macOS-dmg
+          path: dist/
+          retention-days: 14
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: better-macOS ${{ inputs.tag }}
+          draft: ${{ inputs.draft }}
+          generate_release_notes: true
+          files: |
+            dist/better-macOS.dmg
+            dist/SHA256SUMS.txt
+          body: |
+            ## 安装
+
+            1. 下载 `better-macOS.dmg`
+            2. 打开，把 `better-macOS` 拖进 `Applications`
+            3. 首次启动会引导你授予**辅助功能**权限（必需）
+
+            > 未公证的构建：macOS 会提示「无法验证开发者」。
+            > 请 **右键 App → 打开**，或到「系统设置 → 隐私与安全性」点「仍要打开」。
+            > 这是 Apple 对未公证产物的强制拦截，不是程序缺陷。
