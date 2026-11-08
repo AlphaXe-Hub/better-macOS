@@ -163,8 +163,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openGuide() {
         if guide == nil { guide = MigrationGuideWindow(registry: registry) }
+        presentWindow(guide)
+    }
+
+    /// accessory App（LSUIElement）没有 Dock 图标，`activate` 不总能真正把窗口带到前台。
+    /// 三步都要做：激活、makeKey、orderFrontRegardless。
+    private func presentWindow(_ window: NSWindow?) {
+        guard let window else { return }
         NSApp.activate(ignoringOtherApps: true)
-        guide?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     // MARK: 快捷键面板
@@ -207,6 +215,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[better-macOS] fire: %@ (%@)", item.title, item.combo)
         }
         browser = w
+        NSApp.activate(ignoringOtherApps: true)
+        w.orderFrontRegardless()
         w.focusSearch()
     }
 
@@ -226,8 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openPrefs() {
         if prefs == nil { prefs = PreferencesWindow(registry: registry) }
-        NSApp.activate(ignoringOtherApps: true)
-        prefs?.makeKeyAndOrderFront(nil)
+        presentWindow(prefs)
     }
 
     @objc private func quit() { NSApp.terminate(nil) }

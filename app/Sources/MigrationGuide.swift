@@ -29,6 +29,8 @@ final class MigrationGuideWindow: NSPanel {
         titlebarAppearsTransparent = true
         titleVisibility = .hidden
         level = .floating
+        // 同上：accessory App 不关这个，窗口会立刻隐藏
+        hidesOnDeactivate = false
         center()
         buildRows()
         buildUI()

@@ -32,6 +32,7 @@ final class ShortcutBrowserWindow: NSPanel {
         titleVisibility = .hidden
         isMovableByWindowBackground = true
         level = .floating
+        hidesOnDeactivate = false   // accessory App 必须显式关掉，否则窗口一弹出就隐藏
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         buildRows()
         buildUI()

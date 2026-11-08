@@ -65,6 +65,9 @@ final class ToastWindow: NSPanel {
 
         // 不抢焦点：nonactivating + borderless + ignoresMouseEvents
         isFloatingPanel = true
+        // NSPanel 默认 hidesOnDeactivate = true，而 accessory App 永远不会成为
+        // active App——不关掉这个，吐司一弹出就会立刻自己被藏起来。
+        hidesOnDeactivate = false
         level = .statusBar
         backgroundColor = .clear
         isOpaque = false
