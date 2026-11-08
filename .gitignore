@@ -1,0 +1,19 @@
+# 构建产物
+app/build/
+build/
+*.app
+
+# Swift/SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+*.o
+*.dSYM/
+
+# module cache
+.modulecache/
+mc/
+
+# macOS
+.DS_Store
+._*
