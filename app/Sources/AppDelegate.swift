@@ -189,13 +189,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 决定「这次按键要不要弹吐司」的全部策略都在这里。
     ///
-    /// 三条规则，按顺序：
+    /// 四条规则，按顺序：
     /// 1. **没按修饰键的一律不弹**——那是打字。每按一个字母弹一次是不可用的产品。
     /// 2. **单按修饰键本身不弹**——⌘、⇧ 单独按下不是动作。
     /// 3. **有修饰键但没绑定菜单的，弹一句「未绑定」**——
     ///    对迁移者来说「我按了但没反应」是最需要解释的状态，
     ///    而这正是 Windows 肌肉记忆落空的时刻。
+    /// 4. **同一个组合被反复按**时，即使规则 3 的开关是关的，也解释一次
+    ///    （`UnboundNudge`）。这是「查表失败不再静默」的落点：用户反复按同一个
+    ///    组合却没反应，说明他正在困惑，此时沉默就是在让他以为工具坏了。
     func diag(_ msg: String) { Diag.log(msg) }
+
+    /// 「未绑定」按键的计数，键是组合串（`⌃⌥J` 这种带修饰键、菜单里又没有的组合）。
+    ///
+    /// 只留最近按过的那几十个：一个长尾字典会一直涨，而这个表只服务于
+    /// 「刚刚在反复按什么」。给个硬上限，省得为它写淘汰算法。
+    private var unboundPresses: [String: UnboundNudge.Presses] = [:]
+    private static let maxTrackedUnbound = 32
 
     private func handleKey(_ stroke: KeyStroke) {
         let hudEnabled = UserDefaults.standard.object(forKey: "hud.enabled") as? Bool ?? true
@@ -206,7 +216,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let resolution = resolver.resolve(stroke: stroke, in: lastSnapshot)
         let showUnknown = UserDefaults.standard.object(forKey: "hud.show-unknown") as? Bool ?? false
+
+        // 只有「我们查得到菜单、但确实没绑定」才计数。`noSnapshot` 是我们的问题
+        // 不是键的问题，拿它计数会得出「用户反复按了一个不存在的键」的错误结论。
+        var repeated = false
+        var nudgeLine = ""
+        if resolution.miss == .notBound {
+            let now = ProcessInfo.processInfo.systemUptime
+            let presses = UnboundNudge.record(presses: unboundPresses[stroke.combo], now: now)
+            unboundPresses[stroke.combo] = presses
+            repeated = UnboundNudge.shouldExplain(presses)
+            if unboundPresses.count > Self.maxTrackedUnbound {
+                unboundPresses = Dictionary(uniqueKeysWithValues:
+                    unboundPresses.sorted { $0.value.lastAt > $1.value.lastAt }
+                        .prefix(Self.maxTrackedUnbound)
+                        .map { ($0.key, $0.value) })
+            }
+            nudgeLine = "  · 未绑定计数：第 \(presses.count) 次，已解释 \(presses.explained) 次"
+                + "（反复按才解释：\(UnboundNudge.threshold) 次 / 间隔 ≤ \(Int(UnboundNudge.idleGap))s）"
+                + (repeated ? " → 这次开口" : " → 继续沉默")
+        }
+
         diag("KEY \(stroke.combo)  snapshot=\(lastSnapshot?.appName ?? "NIL")(\(lastSnapshot?.items.count ?? 0)项)  action=\(resolution.action ?? "未绑定")  miss=\(String(describing: resolution.miss))")
+        if !nudgeLine.isEmpty { diag(nudgeLine) }
 
         let content: ToastContent
         if let action = resolution.action {
@@ -215,12 +247,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    windowsEquivalent: WindowsEquivalents.lookup(combo: stroke.combo, action: action),
                                    sourceApp: resolution.appName)
         } else if let copy = resolution.unboundCopy,
-                  UnboundPolicy.shouldToast(miss: resolution.miss, showUnknown: showUnknown) {
+                  UnboundPolicy.shouldToast(miss: resolution.miss,
+                                            showUnknown: showUnknown,
+                                            repeated: repeated) {
             content = ToastContent(action: copy.title,
                                    combo: stroke.combo,
                                    windowsEquivalent: nil,
                                    sourceApp: resolution.appName,
                                    note: copy.note)
+            // 解释过一次就记账，同一个组合不会无限重复解释。
+            if resolution.miss == .notBound, let p = unboundPresses[stroke.combo] {
+                unboundPresses[stroke.combo] = UnboundNudge.didExplain(p)
+            }
         } else {
             diag("  → 未绑定且当前策略下不弹")
             return   // 规则 3 默认关闭：不解释未绑定键，避免噪音

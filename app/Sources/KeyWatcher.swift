@@ -20,9 +20,13 @@ struct KeyStroke: Equatable {
         if f.contains(.shift)   { mods.insert(.shift) }
         if f.contains(.option)  { mods.insert(.option) }
         if f.contains(.control) { mods.insert(.control) }
-        if fnIsHeld(event)      { mods.insert(.function) }   // issue #11 第 ① 层
 
-        let key = displayKey(for: event)
+        // fn 只算一次：它既是「组合里的一位」，又决定「这个键码该叫什么名字」。
+        // 两处各算一次就会出现「组合带 fn、键名却不带」的自相矛盾状态。
+        let fn = fnIsHeld(event)                            // issue #11 第 ① 层
+        if fn { mods.insert(.function) }
+
+        let key = displayKey(for: event, fnHeld: fn)
         guard !key.isEmpty else { return nil }
         return KeyStroke(key: key, modifiers: mods)
     }
@@ -85,12 +89,15 @@ struct KeyStroke: Equatable {
 
     /// 虚拟键码就是 Carbon virtual key code，和 AX 的 `AXMenuItemCmdVirtualKey` 同域，
     /// 所以两侧可以共用同一张表——这是能让「按下的键」和「菜单里的键」对上的关键。
-    static func displayKey(for event: NSEvent) -> String {
-        if let mapped = ShortcutItemKey.virtualKeyMap[Int(event.keyCode)] { return mapped }
-        if let chars = event.charactersIgnoringModifiers, !chars.isEmpty {
-            return chars.uppercased()
-        }
-        return ""
+    ///
+    /// **但两侧对「同一个键码叫什么」并不总是一致**：按住 fn 时方向键会换一个键码
+    /// （← 从 123 变成 115），而菜单里永远登记 Apple 官方写法 `fn⌃←`。
+    /// 翻译逻辑在 `ShortcutItemKey.displayKey(cmdChar:virtualKey:fnHeld:)`，
+    /// 这里是它的唯一调用方，`fnHeld` 必须传真的那个值。
+    static func displayKey(for event: NSEvent, fnHeld: Bool) -> String {
+        ShortcutItemKey.displayKey(cmdChar: event.charactersIgnoringModifiers ?? "",
+                                   virtualKey: Int(event.keyCode),
+                                   fnHeld: fnHeld)
     }
 }
 
@@ -210,6 +217,13 @@ enum SystemShortcuts {
         let group: String
         /// 出处标记，测试会断言它非空（没有出处 = 拍脑袋，不许进表）。
         let source: String
+        /// 适用版本。**nil 表示「所有受支持的版本都一样」**，不是「没查」。
+        ///
+        /// 存在的理由：窗口平铺是 macOS 15 Sequoia 才有的。在 Sonoma 上把
+        /// fn⌃← 说成「平铺到左半屏」就是一句谎话 —— 而 App 的
+        /// `LSMinimumSystemVersion` 是 14.0，真有用户跑在 Sonoma 上。
+        /// 版本信息本来只写在源注释里，注释进不了吐司，所以它得是数据。
+        var versions: String? = nil
     }
 
     /// 精确查表。查不到返回 nil —— **绝不猜**。
@@ -253,17 +267,17 @@ enum SystemShortcuts {
         Entry(combo: "⌃→", name: "向右切换一个桌面", group: "桌面与空间", source: "A1/A3"),
 
         // —— 窗口平铺：整组都要带 fn，这是迁移者最常踩的一组（[A2]）——
-        Entry(combo: "fn⌃←", name: "平铺到左半屏", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃→", name: "平铺到右半屏", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃↑", name: "平铺到上半屏", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃↓", name: "平铺到下半屏", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃⇧←", name: "左右分屏（左）", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃⇧→", name: "左右分屏（右）", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃⌥⇧←", name: "左侧 + 右侧四分", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃⌥⇧→", name: "右侧 + 左侧四分", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃F", name: "铺满桌面", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃C", name: "窗口居中", group: "窗口", source: "A2"),
-        Entry(combo: "fn⌃R", name: "恢复平铺前的大小", group: "窗口", source: "A2"),
+        Entry(combo: "fn⌃←", name: "平铺到左半屏", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃→", name: "平铺到右半屏", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃↑", name: "平铺到上半屏", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃↓", name: "平铺到下半屏", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃⇧←", name: "左右分屏（左）", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃⇧→", name: "左右分屏（右）", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃⌥⇧←", name: "左侧 + 右侧四分", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃⌥⇧→", name: "右侧 + 左侧四分", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃F", name: "铺满桌面", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃C", name: "窗口居中", group: "窗口", source: "A2", versions: "macOS 15 起"),
+        Entry(combo: "fn⌃R", name: "恢复平铺前的大小", group: "窗口", source: "A2", versions: "macOS 15 起"),
         Entry(combo: "⌃⌘F", name: "进入 / 退出全屏", group: "窗口", source: "A1"),
 
         // —— 系统界面（[A1]）——
@@ -307,18 +321,95 @@ struct UnboundCopy: Equatable {
 /// 编排层那 900 行没人想在单测里拖进来。
 enum UnboundPolicy {
 
-    /// 三类的处理刻意不同：
+    /// 每一类的处理刻意不同：
     /// - **系统级**：总是弹。按了 ⌃↑ 没反应，最需要的正是「这是系统键、不是工具坏了」。
     ///   它不会造成打字噪音——系统级组合本来就不会在打字时出现。
     /// - **确实没绑定**：跟随 `hud.show-unknown`（默认关）。这是噪音开关。
     /// - **还读不到菜单**：不弹。我们没有任何确定信息可说，弹出来只会增加困惑。
-    static func shouldToast(miss: ShortcutResolver.Resolution.Miss?, showUnknown: Bool) -> Bool {
+    ///
+    /// - Parameter repeated: 这个组合是不是已经**反复按过好几次**
+    ///   （判据在 `UnboundNudge`）。**这是「不再静默」的闸门**：默认关的
+    ///   未绑定提示，在用户明显在重复尝试时放行一次。
+    ///
+    ///   为什么不是直接把 `hud.show-unknown` 默认改成 true：那样用户每打一个
+    ///   没绑定的组合都会被弹一次，包括正常输入时手滑按到的 ⌘J 之类 ——
+    ///   一个天天在眼前闪的东西会被关掉，然后**连真正有用的那次也不弹了**。
+    ///   反复按的关键区别在于：用户的行为已经表达了困惑，此时解释才有价值。
+    static func shouldToast(miss: ShortcutResolver.Resolution.Miss?,
+                            showUnknown: Bool,
+                            repeated: Bool = false) -> Bool {
         switch miss {
         case .systemReserved: return true
-        case .notBound:       return showUnknown
+        case .notBound:       return showUnknown || repeated
         case .noSnapshot:     return false
         case nil:             return false
         }
+    }
+}
+
+// MARK: - 「这次该不该多嘴」：反复按的闸门
+
+/// 用户反复按同一个「查不到」的组合时，放开一次解释。
+///
+/// ## 为什么需要它
+///
+/// 这次 bug 真正伤人的地方不是「查不到」，而是**查不到 + 永远沉默**。
+/// 用户按了某个组合、屏幕上什么都没有，他不知道是「这个键不属于我们」还是
+/// 「这个工具坏了」。如果他按了好几次，我们一次都没说话 —— 这正是那次投诉。
+///
+/// ## 为什么不是「全都弹」
+///
+/// 未绑定提示的默认值是关，而且必须关着：打字、手滑、编辑器里的临时组合
+/// 都会产生未绑定按键。真把它们全弹出来，用户会关掉吐司 —— 那时连
+/// 「⌘S = 存储」这种有用的提示也一起没了。所以只在国内**同一个组合
+/// 被反复按**时才说一次：那已经是一个人在反复确认「为什么没反应」了。
+///
+/// ## 纯逻辑 / 纯状态
+///
+/// 时间和「这个组合按过几次」都由调用方喂进来（`now` / `presses`），
+/// 这样单测不需要 sleep、也不需要假时钟。
+struct UnboundNudge {
+
+    /// 同一个组合按到第几次才值得开口。取 3：第 1 次可能只是想按别的键，
+    /// 第 2 次可能是手滑重复，第 3 次基本可以确定是「我在试这个键」。
+    static let threshold = 3
+
+    /// 两次之间隔太久就不算「反复按」了（用户中途去干别的了）。
+    static let idleGap: TimeInterval = 4.0
+
+    /// 同一个组合同一轮里最多解释几次。
+    ///
+    /// 不设上限的话，用户按住不放（`isARepeat` 或手抖连按）会弹出一串一样的吐司，
+    /// 那就从「沉默」走到了另一个极端。
+    static let maxExplanations = 2
+
+    /// 一个组合的按键计数。值语义，方便单测直接构造。
+    struct Presses: Equatable {
+        var count: Int
+        var explained: Int
+        var lastAt: TimeInterval
+    }
+
+    /// 记一次按键，返回新的计数。
+    ///
+    /// 隔了超过 `idleGap` 秒再按，就从 1 重新数 —— 否则一天下来「按过 3 次」
+    /// 会随机命中某次无关的按键，弹一句莫名其妙的解释。
+    static func record(presses: Presses?, now: TimeInterval) -> Presses {
+        guard let old = presses, now - old.lastAt <= idleGap else {
+            return Presses(count: 1, explained: presses?.explained ?? 0, lastAt: now)
+        }
+        return Presses(count: old.count + 1, explained: old.explained, lastAt: now)
+    }
+
+    /// 这一次该不该多说一句。**不改状态**——计数由 `record` 负责，这里只判断。
+    static func shouldExplain(_ p: Presses?) -> Bool {
+        guard let p else { return false }
+        return p.count >= threshold && p.explained < maxExplanations
+    }
+
+    /// 说过了，记一笔（否则同一个组合会被解释无限多次）。
+    static func didExplain(_ p: Presses) -> Presses {
+        Presses(count: p.count, explained: p.explained + 1, lastAt: p.lastAt)
     }
 }
 

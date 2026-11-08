@@ -736,6 +736,137 @@ check("还读不到菜单 → 不弹（没有任何确定信息可说）",
 check("有动作名 → 不走这条策略",
       !UnboundPolicy.shouldToast(miss: nil, showUnknown: true))
 
+// MARK: - fn + 方向键：键码重映射（用户报的「fn⌃← 没反应」）
+
+// **这是本次的真 bug**，而且和 fn 那一层不是同一件事：
+//   按下 fn⌃←  → 系统投递 keyCode 115 → 旧代码查表得 ↖ → 组合成了 fn⌃↖
+//   而 SystemShortcuts 里按 Apple 官方写法登记的是 fn⌃←
+//   一个 ↖ 对不上一个 ← → 查表永远失败 → 静默丢弃
+// 真键盘事件造不出来（fn 的按住状态只存在于 CGEvent 的 .maskSecondaryFn），
+// 所以这层语义只能靠纯函数守住。
+print("\n[fn + 方向键：keyCode 在 fn 按住时被系统换了，组合串必须还原]")
+
+// 1) fn 按住时，115/119/116/121 必须还原成 ←→↑↓（Apple 官方写法）
+let fnArrowCases: [(code: Int, plain: String, fn: String)] = [
+    (115, "↖", "←"), (119, "↘", "→"), (116, "↟", "↑"), (121, "↡", "↓"),
+]
+for c in fnArrowCases {
+    check("keyCode \(c.code)：不按 fn 仍是 \(c.plain)",
+          ShortcutItemKey.displayKey(cmdChar: "", virtualKey: c.code, fnHeld: false) == c.plain,
+          "得到 \(ShortcutItemKey.displayKey(cmdChar: "", virtualKey: c.code, fnHeld: false))")
+    check("keyCode \(c.code)：按住 fn 变成 \(c.fn)（Apple 官方写法）",
+          ShortcutItemKey.displayKey(cmdChar: "", virtualKey: c.code, fnHeld: true) == c.fn,
+          "得到 \(ShortcutItemKey.displayKey(cmdChar: "", virtualKey: c.code, fnHeld: true)) —— 这会拼出 fn⌃\(c.plain)，永远查不中表")
+}
+
+// 2) ★ 回归看门狗：裸 Home 键必须是 ↖。
+//    键盘右上角那颗写着 home 的键报的也是 115，无脑把 115 改成 ← 会把它叫错。
+check("裸 Home 键（115、不按 fn）仍然显示 ↖ —— 它真的叫 Home",
+      ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 115, fnHeld: false) == "↖",
+      "得到 \(ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 115, fnHeld: false))")
+check("裸 End 键（119、不按 fn）仍然显示 ↘",
+      ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 119, fnHeld: false) == "↘")
+check("裸 ←（123）不受影响",
+      ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 123, fnHeld: false) == "←"
+        && ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 123, fnHeld: true) == "←")
+
+// 3) fn 只改这四组；别把 F 键一起改了（F11 不重映射，探针确认过）
+check("fn 不重映射 F 键（F3 仍是 F3）",
+      ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 99, fnHeld: true) == "F3")
+check("fn 不重映射 F11（官方 Fn-F11 = 显示桌面，走的是 fnF11 这条已有条目）",
+      ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 103, fnHeld: true) == "F11")
+check("fn 不重映射字母键",
+      ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 1, fnHeld: true) == "S")
+
+// 4) ★ 端到端一小步：真的造 NSEvent 走 from(event:)，证明 displayKey 拿到了 fn
+//    注意合成事件能同时给出 .function 语义位和 cgEvent，所以这里验的是
+//    「from() 真的把 fn 传给了键码翻译」，不是验 fnIsHeld 本身（那在上面）。
+let evHome     = makeKeyEvent(115, [], "\u{F729}")
+let evFnHome   = makeKeyEvent(115, [.function], "\u{F729}")
+let sHome      = KeyStroke.from(event: evHome)
+let sFnHome    = KeyStroke.from(event: evFnHome)
+check("合成 keyCode 115 不按 fn → ↖",
+      sHome?.key == "↖" && sHome?.combo == "↖", "得到 \(sHome?.combo ?? "nil")")
+check("★ 合成 keyCode 115 按住 fn → fn←（不是 fn↖ —— 这就是那个 bug）",
+      sFnHome?.combo == "fn←", "得到 \(sFnHome?.combo ?? "nil")")
+
+// 5) 这一整条链的**目的**：还原后的组合必须能命中系统表。
+//    否则「修好了显示」但「还是查不到」，用户体验一点没变。
+let fnLeftStroke = KeyStroke(key: ShortcutItemKey.displayKey(cmdChar: "", virtualKey: 115, fnHeld: true),
+                             modifiers: [.control, .function])
+check("fn⌃← 还原后能命中系统表（平铺到左半屏）",
+      SystemShortcuts.lookup(combo: fnLeftStroke.combo)?.name == "平铺到左半屏",
+      "组合=\(fnLeftStroke.combo) 查表=\(SystemShortcuts.lookup(combo: fnLeftStroke.combo)?.name ?? "nil")")
+check("还原前的 fn⌃↖ **查不中**任何条目 —— 这正是旧代码的状态",
+      SystemShortcuts.lookup(combo: "fn⌃↖") == nil)
+
+// 6) 表里没有登记的 fn 方向键（fn⇧← 这种）仍然走「没绑定」，不会凭空出现动作名
+check("表里没有的 fn 组合仍查不中（不瞎猜）",
+      SystemShortcuts.lookup(combo: "fn⇧←") == nil)
+
+// MARK: - 不再静默：反复按同一个查不到的组合时解释一次
+
+// 这次 bug 真正伤人的地方不是「查不到」，而是**查不到 + 永远沉默**。
+// 但也不能把所有未绑定都弹（打字噪音）。判据：同一个组合被反复按。
+print("\n[反复按同一个查不到的组合：解释一次，而不是永远沉默]")
+
+let nudgeA = UnboundNudge.record(presses: nil, now: 100)
+check("第一次按 → count=1", nudgeA.count == 1)
+check("第一次按不值得开口（可能只是想按别的键）", !UnboundNudge.shouldExplain(nudgeA))
+let nudgeB = UnboundNudge.record(presses: nudgeA, now: 100.3)
+check("隔 0.3s 再按 → count=2", nudgeB.count == 2)
+check("第二次还不开口（可能是手抖重复）", !UnboundNudge.shouldExplain(nudgeB))
+let nudgeC = UnboundNudge.record(presses: nudgeB, now: 100.6)
+check("第 3 次 → 开口（阈值 3）",
+      nudgeC.count == UnboundNudge.threshold && UnboundNudge.shouldExplain(nudgeC))
+
+// 隔太久就不算「反复按」：否则一天里零散按 3 次会随机命中一次莫名其妙的解释
+let stale = UnboundNudge.record(presses: nudgeB, now: 100.3 + UnboundNudge.idleGap + 0.1)
+check("隔了超过 \(Int(UnboundNudge.idleGap))s 再按 → 计数从 1 重来",
+      stale.count == 1, "得到 \(stale.count)")
+check("重来后不立刻开口", !UnboundNudge.shouldExplain(stale))
+
+// 解释过要记账，否则按住不放会弹出一串一样的吐司
+var explained = nudgeC
+for _ in 0 ..< UnboundNudge.maxExplanations { explained = UnboundNudge.didExplain(explained) }
+check("同一个组合最多解释 \(UnboundNudge.maxExplanations) 次（按住不放不刷屏）",
+      !UnboundNudge.shouldExplain(explained),
+      "已解释 \(explained.explained) 次仍然要解释")
+check("解释过之后**继续按**也不再开口（不是每次都弹）",
+      !UnboundNudge.shouldExplain(UnboundNudge.record(presses: explained, now: 101)))
+
+check("重复解释次数不回退（record 不清 explained）",
+      UnboundNudge.record(presses: explained, now: 101).explained == explained.explained)
+
+// 策略层：默认关的未绑定提示，在「反复按」时放行
+check("未绑定 + 开关关 + 没反复 → 不弹（打字噪音仍被挡住）",
+      !UnboundPolicy.shouldToast(miss: .notBound, showUnknown: false, repeated: false))
+check("未绑定 + 开关关 + 反复按 → 弹（这就是「不再静默」）",
+      UnboundPolicy.shouldToast(miss: .notBound, showUnknown: false, repeated: true))
+check("还读不到菜单 + 反复按 → 仍不弹（我们没有任何确定信息可说）",
+      !UnboundPolicy.shouldToast(miss: .noSnapshot, showUnknown: false, repeated: true))
+check("repeated 参数默认 false（既有调用方不传也不改变行为）",
+      UnboundPolicy.shouldToast(miss: .notBound, showUnknown: false)
+        == UnboundPolicy.shouldToast(miss: .notBound, showUnknown: false, repeated: false))
+
+// MARK: - 系统表：版本差异必须进数据，不能只躺在注释里
+
+// 窗口平铺是 macOS 15 Sequoia 起才有的，而本 App 的 LSMinimumSystemVersion 是 14.0。
+// 在 Sonoma 上把 fn⌃← 说成「平铺到左半屏」是一句谎话，所以版本要能被读到。
+print("\n[系统表：版本差异是数据，不是注释]")
+
+check("用 fn⌃← 验：条目带版本标注",
+      SystemShortcuts.lookup(combo: "fn⌃←")?.versions == "macOS 15 起",
+      "得到 \(SystemShortcuts.lookup(combo: "fn⌃←")?.versions ?? "nil")")
+check("窗口平铺整组都标了版本（11 条，一条不落）",
+      SystemShortcuts.all.filter { $0.group == "窗口" && $0.combo != "⌃⌘F" }
+        .allSatisfy { $0.versions != nil })
+check("所有版本无关的条目 versions 为 nil（nil ≠ 没查）",
+      SystemShortcuts.lookup(combo: "⌘Space")?.versions == nil
+        && SystemShortcuts.lookup(combo: "⇧⌘3")?.versions == nil)
+check("fnF11 仍在表里（官方 Fn-F11 = 显示桌面，别被这次改动碰掉）",
+      SystemShortcuts.lookup(combo: "fnF11")?.name == "显示桌面")
+
 // MARK: - 吐司不截断（--render-toast 抓到的另一个 bug）
 
 // 背景：`--render-toast` 渲染出来的长动作名「平铺到左半屏」被画成「平铺到左…」。

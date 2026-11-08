@@ -349,6 +349,48 @@ enum ShortcutItemKey {
         98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
     ]
 
+    /// **按住 fn 时，同一个物理方向键会报另一个键码。**
+    ///
+    /// | 物理键 | 不按 fn | 按住 fn | 键码原义（不按 fn 时确实该这么显示） |
+    /// |---|---|---|---|
+    /// | ← | 123 | **115** | ↖ Home |
+    /// | → | 124 | **119** | ↘ End |
+    /// | ↑ | 126 | **116** | ↟ PageUp |
+    /// | ↓ | 125 | **121** | ↡ PageDown |
+    ///
+    /// 键码本义是对的：**裸按 115 就是 Home**，所以 `virtualKeyMap` 里 115 → ↖
+    /// 不能改。错的只是「按住 fn 时还这么说」——那一刻它不是 Home，是 fn+←。
+    ///
+    /// 不要试图从 `charactersIgnoringModifiers` 反推：按住 fn 时它也是私用区码位
+    /// （`NSHomeFunctionKey` 0xF729），给不出方向。真值只有一张表：这个字典。
+    static let fnRemappedKeyCodes: [Int: String] = [
+        115: "←", 119: "→", 116: "↑", 121: "↓",
+    ]
+
+    /// 真键盘事件的键 → 显示字符。**纯函数，全项目唯一一处做「fn 改键码」翻译。**
+    ///
+    /// 为什么必须是纯函数：真键盘事件在单测里造不出来（`fn` 的按住状态只存在于
+    /// `CGEvent` 的 `.maskSecondaryFn`，`NSEvent.keyEvent(...)` 合成出来的事件
+    /// 拿不到那个位），所以这层语义只能靠「喂事实、断结果」来守住。
+    ///
+    /// ## 它修的是什么 bug（用户报的「fn+方向键没反应」）
+    ///
+    /// 用户按 fn⌃←，系统投递的是 keyCode **115**，查 `virtualKeyMap` 得到 `↖`，
+    /// 于是组合成了 `fn⌃↖`。而 `SystemShortcuts` 表按 Apple 官方写法登记的是
+    /// `fn⌃←` —— 一个 `↖` 对不上一个 `←`，**查表永远失败**，静默丢弃。
+    /// 换算后组合还原成 `fn⌃←`，表命中了，用户才看得到「平铺到左半屏」。
+    ///
+    /// 只对**按住 fn 时**生效：裸 Home 键（115）仍然显示 ↖，那是它的真名。
+    /// 顺带一提，键盘右上角那颗写着「home」的键报的也是 115 —— 所以不能
+    /// 「把 115 一律改成 ←」，那会把这颗真 Home 键也叫成 fn←。fn 才是区分依据。
+    static func displayKey(cmdChar: String, virtualKey: Int?, fnHeld: Bool) -> String {
+        if let vk = virtualKey {
+            if fnHeld, let arrow = fnRemappedKeyCodes[vk] { return arrow }
+            if let mapped = virtualKeyMap[vk] { return mapped }
+        }
+        return cmdChar.isEmpty ? "" : cmdChar.uppercased()
+    }
+
     static let glyphMap: [Int: String] = [
         0x2191: "↑", 0x2193: "↓", 0x2190: "←", 0x2192: "→",
         0x21E7: "⇧", 0x2325: "⌥", 0x2303: "⌃", 0x2318: "⌘",
