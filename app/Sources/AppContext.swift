@@ -3,24 +3,44 @@ import ApplicationServices
 
 // MARK: - 权限
 
-/// TCC 的唯一入口。**返回值不能作为「能不能收到事件」的判据**——
-/// 本机实测：未授权时 `tapCreate`/`addGlobalMonitor` 都会返回非 nil 而零投递。
-/// 所以这里只负责「权限状态」的读取与引导。
+/// TCC 的唯一入口。
+///
+/// **两条铁律**（都有实测依据）：
+/// 1. `AXIsProcessTrusted()` 的返回值不能当作「能不能收到事件」的判据——
+///    未授权时 `tapCreate`/`addGlobalMonitor` 都会返回非 nil 而零投递。
+/// 2. `AXIsProcessTrustedWithOptions(prompt: true)` **不保证把本 App 加进授权列表**。
+///    ad-hoc 签名、首次运行、或系统正在忙的时候，用户点进系统设置可能看到一个空列表，
+///    然后以为是 App 坏了。**所以主引导必须是「自己把 App 拖进去」**，
+///    系统弹窗只作为尝试，不能作为唯一路径。
 enum Permissions {
 
     /// 辅助功能是否已授权。`prompt: false` 不弹窗，可安全轮询。
     static var hasAccessibility: Bool { AXIsProcessTrusted() }
 
-    /// 引导用户去系统设置。**不保证返回后已授权**——用户可能只是看了一眼。
-    static func requestAccessibility() {
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(opts)
+    /// 本 App 的 bundle 路径（拖拽引导要展示给用户，也可能被拖进系统设置）。
+    static var appBundleURL: URL? {
+        Bundle.main.bundleURL
     }
 
-    /// 直接打开「隐私与安全性 → 辅助功能」面板。
+    /// 尝试让系统弹出授权提示。
+    /// **返回后必须重新检查 `hasAccessibility`，不能假设它成功了。**
+    @discardableResult
+    static func attemptSystemPrompt() -> Bool {
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(opts)
+    }
+
+    /// 打开「隐私与安全性 → 辅助功能」面板。
     static func openAccessibilitySettings() {
-        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-        NSWorkspace.shared.open(url)
+        // 这个 URL scheme 在 macOS 13+ 仍有效；失败时退回到打开「隐私与安全性」根页。
+        let deep = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        NSWorkspace.shared.open(deep)
+    }
+
+    /// 在 Finder 里定位到 App 本体——拖拽引导需要用户能抓到它。
+    static func revealAppInFinder() {
+        guard let url = appBundleURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 

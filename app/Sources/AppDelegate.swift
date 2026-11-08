@@ -18,12 +18,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var prefs: PreferencesWindow?
     private var browser: ShortcutBrowserWindow?
     private var guide: MigrationGuideWindow?
+    private var permGuide: PermissionGuideWindow?
     private var lastSnapshot: MenuInventory.Snapshot?
     private var lastReadError: MenuInventory.Failure?
     private var hotKeyMonitor: Any?
 
     /// 调试入口：由 `main.swift` 按启动参数设置，仅开发期使用。
-    enum DebugTarget { case guide, prefs, browser }
+    enum DebugTarget { case guide, prefs, browser, permission }
     var debugOpenTarget: DebugTarget?
     /// 非 nil 时，打开窗口后把视图离屏渲染成 PNG 再退出（用于无录屏权限时验证布局）。
     var debugRenderTo: String?
@@ -47,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         keyWatcher.start()
 
+        // 修正项需要权限时，走统一的拖拽引导
+        registry.onNeedPermission = { [weak self] in self?.openPermissionGuide() }
+
         // 恢复上次开着的修正项
         registry.restoreSaved()
 
@@ -55,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "perm.prompted")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 self.openGuide()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    self.openPermissionGuide()
+                }
             }
         }
 
@@ -68,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .guide:   self.openGuide()
                 case .prefs:   self.openPrefs()
                 case .browser: self.openBrowser()
+                case .permission: self.openPermissionGuide()
                 }
                 if let path = self.debugRenderTo {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
@@ -162,7 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: 迁移清单
 
     @objc private func openGuide() {
-        if guide == nil { guide = MigrationGuideWindow(registry: registry) }
+        if guide == nil {
+            let w = MigrationGuideWindow(registry: registry)
+            w.onRequestPermission = { [weak self] in self?.openPermissionGuide() }
+            guide = w
+        }
         presentWindow(guide)
     }
 
@@ -187,8 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 a.addButton(withTitle: "去授权")
                 a.addButton(withTitle: "取消")
                 if a.runModal() == .alertFirstButtonReturn {
-                    Permissions.requestAccessibility()
-                    Permissions.openAccessibilitySettings()
+                    self.openPermissionGuide()
                 }
             case .cannotComplete:
                 a.informativeText = "这个 App 没有及时响应菜单查询，或者权限尚未生效。\n如果刚授权完，请先退出并重新启动 better-macOS。"
@@ -234,8 +245,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: 设置
 
+    /// 打开的权限引导（拖拽式）。已有实例就复用。
+    func openPermissionGuide() {
+        if permGuide == nil {
+            let w = PermissionGuideWindow()
+            w.onGranted = { [weak self] in
+                guard let self else { return }
+                // 授权后需要重建前台菜单快照：之前失败过的那次不会自己重试。
+                self.tracker.refresh()
+            }
+            permGuide = w
+        }
+        permGuide?.present()
+    }
+
     @objc private func openPrefs() {
-        if prefs == nil { prefs = PreferencesWindow(registry: registry) }
+        if prefs == nil {
+            let w = PreferencesWindow(registry: registry)
+            w.onRequestPermission = { [weak self] in self?.openPermissionGuide() }
+            prefs = w
+        }
         presentWindow(prefs)
     }
 
@@ -244,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 把一个窗口的视图树离屏渲染成 PNG。
     /// 绕过屏幕录制权限：读的是自己的视图缓存，不是显示器内容。
     func renderOpenWindows(to path: String) {
-        let windows = [guide as NSWindow?, prefs, browser].compactMap { $0 }
+        let windows = [permGuide as NSWindow?, guide, prefs, browser].compactMap { $0 }
         guard let w = windows.first else {
             NSLog("[better-macOS] render: no window"); NSApp.terminate(nil); return
         }

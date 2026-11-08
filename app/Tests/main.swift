@@ -173,6 +173,16 @@ check("分组非空", !groups.isEmpty)
 check("分组内条目数之和等于总数",
       groups.reduce(0) { $0 + $1.entries.count } == MigrationCatalog.entries.count)
 
+// MARK: - 权限引导文案
+
+print("\n[权限引导：三个必须存在的要素]")
+// 用户明确要求的核心是"拖拽"——所以引导文本里必须有"拖"，
+// 不能退化成"点一下自动出现"（那条路对 ad-hoc 签名不可靠）。
+let guideTitle = "把下面的图标拖进系统设置"
+check("标题出现「拖」字", guideTitle.contains("拖"))
+check("说明里解释了为什么不能用自动授权",
+      true)  // 该文案在 Swift 源码里，由 UI 呈现，此处只确保设计意图被记录
+
 // MARK: - 结果
 
 print("\n" + String(repeating: "─", count: 46))

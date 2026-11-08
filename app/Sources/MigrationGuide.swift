@@ -110,7 +110,7 @@ final class MigrationGuideWindow: NSPanel {
         text.textColor = .secondaryLabelColor
         text.preferredMaxLayoutWidth = 440
 
-        let btn = NSButton(title: "去授权", target: self, action: #selector(requestPerm))
+        let btn = NSButton(title: "如何授权 →", target: self, action: #selector(requestPerm))
         btn.bezelStyle = .rounded
         btn.controlSize = .small
 
@@ -122,9 +122,11 @@ final class MigrationGuideWindow: NSPanel {
     }
 
     @objc private func requestPerm() {
-        Permissions.requestAccessibility()
-        Permissions.openAccessibilitySettings()
+        onRequestPermission?()
     }
+
+    /// 由 AppDelegate 注入：打开拖拽式权限引导。
+    var onRequestPermission: (() -> Void)?
 
     // MARK: 就地修正
 

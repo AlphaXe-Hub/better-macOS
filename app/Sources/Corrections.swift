@@ -233,6 +233,10 @@ final class CorrectionRegistry {
         }
     }
 
+    /// 由 AppDelegate 注入：打开拖拽式权限引导。
+    /// CorrectionRegistry 自己不该知道 UI 长什么样。
+    var onNeedPermission: (() -> Void)?
+
     func setEnabled(_ c: Correction, _ on: Bool) {
         if on {
             switch c.enable() {
@@ -245,8 +249,7 @@ final class CorrectionRegistry {
                 a.addButton(withTitle: "去授权")
                 a.addButton(withTitle: "取消")
                 if a.runModal() == .alertFirstButtonReturn {
-                    Permissions.requestAccessibility()
-                    Permissions.openAccessibilitySettings()
+                    onNeedPermission?()
                 }
             }
         } else {

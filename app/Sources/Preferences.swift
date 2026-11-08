@@ -111,7 +111,7 @@ final class PreferencesWindow: NSWindow {
         row.orientation = .horizontal
         row.spacing = 10
         if !granted {
-            let btn = NSButton(title: "去授权", target: self, action: #selector(openPerms))
+            let btn = NSButton(title: "如何授权 →", target: self, action: #selector(openPerms))
             btn.bezelStyle = .rounded
             row.addArrangedSubview(btn)
         }
@@ -177,9 +177,11 @@ final class PreferencesWindow: NSWindow {
 
     // MARK: 动作
 
+    /// 由 AppDelegate 注入：打开拖拽式权限引导。
+    var onRequestPermission: (() -> Void)?
+
     @objc private func openPerms() {
-        Permissions.requestAccessibility()
-        Permissions.openAccessibilitySettings()
+        onRequestPermission?()
     }
 
     @objc private func toggleHUD(_ sender: NSSwitch) {

@@ -41,6 +41,12 @@ swiftc "${OPT_FLAGS[@]}" \
   "$ROOT"/Sources/*.swift \
   -o "$APPDIR/Contents/MacOS/$APP_NAME"
 
+echo "==> 资源"
+if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
+  cp "$ROOT/Resources/AppIcon.icns" "$APPDIR/Contents/Resources/AppIcon.icns"
+  echo "    已嵌入 AppIcon.icns"
+fi
+
 echo "==> Info.plist"
 cat > "$APPDIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -50,6 +56,7 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>        <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>        <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>              <string>$APP_NAME</string>
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
     <key>CFBundleDisplayName</key>       <string>better-macOS</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1.0</string>
