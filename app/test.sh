@@ -15,12 +15,25 @@ CACHE="$ROOT/build/.modulecache"
 mkdir -p "$CACHE"
 
 echo "==> 编译自测"
-swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -module-cache-path "$CACHE" \
+rm -f "$OUT"
+set +e
+COMPILE_LOG=$(swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -module-cache-path "$CACHE" \
   -framework AppKit -framework ApplicationServices \
   "$ROOT"/Sources/MenuInventory.swift \
   "$ROOT"/Sources/KeyWatcher.swift \
+  "$ROOT"/Sources/InlineText.swift \
+  "$ROOT"/Sources/MigrationCatalog.swift \
+  "$ROOT"/Sources/AppContext.swift \
+  "$ROOT"/Sources/Corrections.swift \
   "$ROOT"/Tests/main.swift \
-  -o "$OUT" 2>&1 | grep -E "error|warning: unused" || true
+  -o "$OUT" 2>&1)
+COMPILE_RC=$?
+set -e
+if [ $COMPILE_RC -ne 0 ] || [ ! -f "$OUT" ]; then
+  echo "$COMPILE_LOG" | grep -E "error" || echo "$COMPILE_LOG"
+  echo "✗ 编译失败——测试没有运行（拒绝拿旧二进制冒充通过）"
+  exit 1
+fi
 
 echo "==> 运行"
 "$OUT"

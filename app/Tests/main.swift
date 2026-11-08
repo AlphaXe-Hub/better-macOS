@@ -44,7 +44,6 @@ check("全修饰键顺序", ShortcutModifiers([.command, .shift, .option, .contr
 print("\n[虚拟键码 → 显示字符]")
 check("键码 1 → S", ShortcutItemKey.display(cmdChar: "", virtualKey: 1, glyph: nil) == "S")
 check("键码 12 → Q（字母表完整）", ShortcutItemKey.display(cmdChar: "", virtualKey: 12, glyph: nil) == "Q")
-check("键码 49 → Space", ShortcutItemKey.display(cmdChar: "", virtualKey: 49, glyph: nil) == "Space")
 check("键码 36 → ⏎", ShortcutItemKey.display(cmdChar: "", virtualKey: 36, glyph: nil) == "⏎")
 check("键码 49 → Space", ShortcutItemKey.display(cmdChar: "", virtualKey: 49, glyph: nil) == "Space")
 check("键码 123 → ←", ShortcutItemKey.display(cmdChar: "", virtualKey: 123, glyph: nil) == "←")
@@ -121,6 +120,58 @@ check("withShortcuts 只保留有键位的",
 check("groups 保持菜单顺序且去重",
       snapshot.groups == ["File", "Edit", "App"],
       "得到 \(snapshot.groups)")
+
+// MARK: - 富文本标记
+
+print("\n[**强调** 标记]")
+let a = InlineText.attributed("按 Enter 是**重命名**，不是打开", font: .systemFont(ofSize: 11), color: .labelColor)
+check("标记被吃掉，不残留星号", !a.string.contains("**"), "得到 \(a.string)")
+check("标记内文字保留", a.string.contains("重命名"), "得到 \(a.string)")
+
+let b = InlineText.attributed("没有标记的普通文本", font: .systemFont(ofSize: 11), color: .labelColor)
+check("无标记时原文不变", b.string == "没有标记的普通文本", "得到 \(b.string)")
+
+let c = InlineText.attributed("**开头**和**结尾**两个", font: .systemFont(ofSize: 11), color: .labelColor)
+check("多处标记都被处理", !c.string.contains("**") && c.string == "开头和结尾两个", "得到 \(c.string)")
+
+let d = InlineText.attributed("**粗**", font: .systemFont(ofSize: 11), color: .labelColor, boldFont: .boldSystemFont(ofSize: 11))
+var sawBold = false
+d.enumerateAttribute(.font, in: NSRange(location: 0, length: d.length)) { v, _, _ in
+    if let f = v as? NSFont, NSFontManager.shared.traits(of: f).contains(.boldFontMask) { sawBold = true }
+}
+check("强调部分真的变粗体", sawBold)
+
+// MARK: - 迁移清单目录
+
+print("\n[迁移清单目录]")
+check("有条目", !MigrationCatalog.entries.isEmpty)
+check("id 不重复", Set(MigrationCatalog.entries.map(\.id)).count == MigrationCatalog.entries.count)
+
+let fixableIDs = MigrationCatalog.entries.compactMap { e -> String? in
+    if case .fixable(let cid) = e.remedy { return cid }
+    return nil
+}
+check("每个 fixable 都指向真实存在的 correction id",
+      fixableIDs.allSatisfy { cid in
+          CorrectionRegistry().corrections.contains { $0.id == cid }
+      },
+      "引用了 \(fixableIDs)")
+
+check("unfixable 都写了理由（不静默隐藏）",
+      MigrationCatalog.entries.allSatisfy { e in
+          if case .unfixable(let why) = e.remedy { return why.count > 20 }
+          return true
+      })
+
+check("每条都有 Mac 行为说明（先说清现实）",
+      MigrationCatalog.entries.allSatisfy { !$0.macBehavior.isEmpty })
+check("每条都有 Windows 对照（证明懂迁移者）",
+      MigrationCatalog.entries.allSatisfy { !$0.windowsBehavior.isEmpty })
+
+let groups = MigrationCatalog.grouped()
+check("分组非空", !groups.isEmpty)
+check("分组内条目数之和等于总数",
+      groups.reduce(0) { $0 + $1.entries.count } == MigrationCatalog.entries.count)
 
 // MARK: - 结果
 

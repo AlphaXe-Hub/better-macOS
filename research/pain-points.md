@@ -2,7 +2,7 @@
 
 > 研究对象：从 Windows 迁移到 macOS 的**具体摩擦点**，用于指导菜单栏 App「better-macOS」的功能取舍。
 > 采集时间：2026-11。调研机为 macOS 26.4（Tahoe），关键结论在本机做过一手验证。
-> 组织方式：按领域分表，每条含「短标题 / 现象 / 证据 / 现有解法 / 可解性判断」，共 **36 条**。
+> 组织方式：按领域分表，每条含「短标题 / 现象 / 证据 / 现有解法 / 可解性判断」，共 **43 条**（原 36 条 + 本次补漏 3 条 + 复核修正）。
 
 ## 0. 方法与证据分级
 
@@ -78,6 +78,7 @@
 | F5 | **NTFS 只能读不能写** | Win 用户的 U 盘/移动硬盘多为 NTFS，插到 Mac 上能看能拷出，但**写不进去**，工作交接时极易踩坑 | [R] [Ask Different 70 赞：如何写 NTFS](https://apple.stackexchange.com/questions/20889/how-do-i-write-to-ntfs-drives-in-os-x)、[R] [r/MacOS：为什么 macOS 不支持 NTFS 写入](https://www.reddit.com/r/MacOS/comments/1kk0v7b/)、[R] [r/mac："NTFS 在 Mac 上只读，要用可疑的第三方软件"](https://www.reddit.com/r/mac/comments/1pjtus3/) | 第三方 NTFS 驱动（付费）、格式化为 exFAT | 🔴（需 root/内核扩展，与 SIP 冲突，不该做） |
 | F6 | **卸载 App 留一地残渣** | Win 有"卸载程序"入口；Mac 是拖到废纸篓，但 `~/Library` 下的配置、缓存、LaunchAgents 全留下 | [R] [Ask Different 33 赞：Zoom 卸不干净](https://apple.stackexchange.com/questions/358651/unable-to-completely-uninstall-zoom-meeting-app)、[A] [Apple：安装与卸载 App](https://support.apple.com/guide/mac-help/install-and-uninstall-other-apps-mh35835/27/mac/27) | AppCleaner / Pearcleaner | 🟢 |
 | F7 | **RAR/7z 双击打不开** | Win 装个 WinRAR 就通吃；Mac 原生归档工具只认 zip，从 Windows 拷来的 .rar 直接卡住 | [B] 知乎专栏（`p/2066200082072991428`，**页面需登录，仅能确认标题存在，正文未核对**，故降为 B 档） | The Unarchiver / Keka / `unar` | 🟡 |
+| F9 | **打开/保存对话框里看不到隐藏文件**（补充，与 F4 不同的层） | Win 的程序"打开/另存为"窗口里能勾选显示隐藏项；Mac 的 NSOpenPanel/SavePanel **不跟随 Finder 的 ⌘⇧.** 设置，`AppleShowAllFiles` 也管不到它。处理 `.bash_profile`、`.env`、`.gitignore` 的人每次都要用「前往文件夹」硬输路径 | [R] [**Ask Different 324 赞、20.2 万浏览**：怎么在打开对话框里显示隐藏文件](https://apple.stackexchange.com/questions/186376/hotkey-to-show-hidden-files-and-folders-in-file-open-dialog)（提问者明确说 `defaults write AppleShowAllFiles` 不满足需求） | 无系统开关；只能 ⌘⇧G 输路径。属 AppKit 面板行为，**系统级无解** | 🟡（若做，只能做浮层/快捷键补丁，无法改面板本身） |
 | F8 | **回车键是"重命名"不是"打开"**（补充，原 36 条遗漏） | Win 上选中文件按 Enter = 打开，是 Finder 里最本能的动作；Mac 上选中文件按 Enter = **进入重命名状态**，打开要 ⌘O。迁移用户在 Finder 里连按几次回车会把文件名全改坏 | [R] [Ask Different：选中文件按 Enter，它想重命名我](https://apple.stackexchange.com/questions/348819/can-we-open-run-a-file-executable-in-finder-using-the-keyboard)（原话 "In Finder, if a file is selected and we press Enter, it wants to rename the file"）、[R] [Ask Different：Enter 想当 ⌘O 用](https://apple.stackexchange.com/questions/8507/enter-return-key-as-cmd-o)、[R] [r/mac：只用键盘怎么打开文件？](https://reddit.com/r/mac/comments/vhchkf/basic_how_open_file_through_finder_using_the/) | 系统设置 → 键盘 → 键盘快捷键 → App 快捷键，可给 Finder 的「打开」加 ⌘↵（社区公认做法）；**但没人能取消 Enter=重命名**，只能叠加 | 🟢（可做，且是纯软件、无权限门槛的空白项） |
 
 ## 4. 鼠标 / 触控板 / 滚动
@@ -118,7 +119,7 @@
 
 | 排名 | 方向 | 影响面 | 可解性 | 竞品空白 | 为什么排这里 |
 |---|---|---|---|---|---|
-| **P1** | **一键「Windows 兼容模式」总控** | 极高 | 🟢 | **极大** | 36 条里唯一**没人做**的形态：现有工具都是单点（只改键、只改滚动、只改窗口），没有一个"我来自 Windows，请把键位/滚动/窗口/右键一次性调成我熟悉的样子"的开关 + 引导。它同时是 P2–P5 的容器和分发入口，技术上全是已具备的 AX / CGEventTap 能力。 |
+| **P1** | **一键「Windows 兼容模式」总控** | 极高 | 🟢 | **极大** | 43 条里唯一**没人做**的形态：现有工具都是单点（只改键、只改滚动、只改窗口），没有一个"我来自 Windows，请把键位/滚动/窗口/右键一次性调成我熟悉的样子"的开关 + 引导。它同时是 P2–P5 的容器和分发入口，技术上全是已具备的 AX / CGEventTap 能力。 |
 | **P2** | **分设备滚动方向 + 指针加速** | 极高 | 🟢 | 中（LinearMouse / Scroll Reverser 已占） | 诉求最刚性：每天插拔鼠标就触发一次，且已用 `defaults` 证明系统层没有按设备能力。空白不大但**是获客入口**——必须做到"比 LinearMouse 更傻瓜"（插上鼠标自动识别、给出"触控板自然 + 鼠标传统"一键预设），否则用户会直接装 LinearMouse。 |
 | **P3** | **Home/End/PgUp/PgDn/Delete 键位兼容** | 高 | 🟡 | 大 | "每天都在用、但所有人都忍着"的痛点，评论情绪最激烈（"我换机后最大的抱怨"），Ask Different 上同主题提问 590 赞，**实测位列全站票数第 8**（仅 7 题高于它）。Karabiner 能做但配置门槛极高（写 JSON），普通用户没有替代品。难点在**按 App/按控件区分**（文本框走 Cocoa key binding，列表走 AX），需逐 App 兜底。 |
 | **P4** | **⌘Tab → 窗口级切换 + 最小化唤起** | 高 | 🟡 | 中（AltTab / Contexts 已占） | "找不到窗口"是中文社区最高频的抱怨主题（知乎整篇长文都在讲），且"最小化后 ⌘Tab 唤不回"是纯行为缺陷、不是偏好问题。需覆盖系统 ⌘Tab（自绘 HUD + AX），工程风险中等但体验差异极明显，适合做 demo。 |
@@ -160,8 +161,31 @@
 ## 9. 结论：产品空隙在哪
 
 1. **最大的空隙不是"某个功能没人做"，而是"没人把散落的单点方案串成一次迁移"**。现有工具都假设用户已经会用 Mac、只是想要更细的控制；迁移用户的真实状态是"我不知道该改什么"。P1 的总控 + 引导是唯一能同时吃到所有痛点流量的形态。
-2. **可解性普遍偏高**：36 条里 19 条判 🟢，且都落在 Accessibility / CGEventTap / AX 这几个可获得的权限面上，不需要内核扩展、不需要 root。
+2. **可解性普遍偏高**：43 条里 **24 条判 🟢、15 条 🟡、仅 4 条 🔴**（按表格判断列实测统计），且 🟢 的都落在 Accessibility / CGEventTap / AX 这几个可获得的权限面上，不需要内核扩展、不需要 root。
 3. **必须承认的边界**：NTFS、菜单栏语义、电源/打印属 🔴，写进 roadmap 会拖垮可信度；M1 若做成"第二个 LinearMouse"就是失败，必须做成"一次性迁移向导里的一步"。
+
+## 附 A：本轮增量与核验记录（2026-11-08）
+
+这份文档在已有 36 条基础上做了**独立复核 + 补漏**，增量如下，便于 Lead 与原作者对账：
+
+**新增痛点（3 条）**
+- **F8 回车键 = 重命名**：原清单没有。Windows 主力用户最容易踩且后果最重（连按回车把文件名改坏），证据为 Ask Different 两条原话提问 + r/mac 讨论。**纯软件可解、无权限门槛**，是本次补漏里商业价值最高的一条。
+- **F9 打开/保存对话框看不到隐藏文件**：原 F4 只覆盖 Finder 内的 ⌘⇧.，但 NSOpenPanel 是另一层、324 赞提问明确说 `AppleShowAllFiles` 管不到。这条把"隐藏文件"从"系统已覆盖"修正为"分两层，第二层没解"。
+- **8.1 竞品能力边界表**：把"谁占了地"升级为"它明确不做什么"，P1 的立项依据由此从"我们觉得没人做"变为"逐条核对官网后的空白"。
+
+**事实修正**
+- 原文 K4「590 赞是全站最高票之一」→ 改为**实测排名：全站票数第 8、keyboard 标签第 2、23.1 万浏览**（Stack Exchange API 按票数翻页实算，前 100 题内定位）。
+- 原文 M1 引用的 726 赞问题 → 补上**实测全站票数第 4**（仅 3 题高于它），这是全部证据里权重最高的一条。
+- 原文 F7 的中文来源（知乎专栏）**403 无法核对正文**，已从隐含可信改为明确标注"仅确认标题存在"，保持 `[B]` 降级。
+
+**已验证的负面结论（可直接用于说服）**
+- 系统偏好里**物理上不存在**按设备设置滚动方向的键（`defaults` 实查：全局 `swipescrolldirection` 单一值 + 触控板/鼠标域均无 `ScrollDirection*`）。M1 不依赖任何二手说法。
+- 截图工具、剪贴板、卸载、贴边分屏、菜单栏收纳、键位重映射**六个领域均已有强势工具**，正面重合没有胜算（见第 8 节与 8.1）。
+
+**本轮未能完成的核验（交接给 Lead）**
+- 知乎 4 条链接（含 `zhuanlan.zhihu.com/p/2072985238423204478`）全部 403，正文与评论区**无法读取**，相关引用仅基于标题，请勿在对外材料中当作已核实。
+- GitHub API 触发未认证限流（60/h 用尽），竞品 star 数未取到；8.1 的竞品判断**全部基于官网自述**，未用 star/下载量做交叉验证。
+- Reddit 官方接口 403，本次改用 Arctic Shift 归档 API 核对（24/24 命中），**未逐条读取评论区原文**，仅核对标题与分数；若需评论级证据需另行补采。
 
 ## 附：采集局限（供复核）
 

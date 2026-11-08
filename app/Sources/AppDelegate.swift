@@ -17,9 +17,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var prefs: PreferencesWindow?
     private var browser: ShortcutBrowserWindow?
+    private var guide: MigrationGuideWindow?
     private var lastSnapshot: MenuInventory.Snapshot?
     private var lastReadError: MenuInventory.Failure?
     private var hotKeyMonitor: Any?
+
+    /// 调试入口：由 `main.swift` 按启动参数设置，仅开发期使用。
+    enum DebugTarget { case guide, prefs, browser }
+    var debugOpenTarget: DebugTarget?
+    /// 非 nil 时，打开窗口后把视图离屏渲染成 PNG 再退出（用于无录屏权限时验证布局）。
+    var debugRenderTo: String?
+    private var debugRenderRetries = 0
 
     // MARK: 启动
 
@@ -45,13 +53,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 首次启动且未授权：主动引导一次，但不要反复打扰
         if !Permissions.hasAccessibility && !UserDefaults.standard.bool(forKey: "perm.prompted") {
             UserDefaults.standard.set(true, forKey: "perm.prompted")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                self.showFirstRunGuidance()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.openGuide()
             }
         }
 
         // 全局热键 ⌥⌘K 打开快捷键面板
         installHotKeyMonitor()
+
+        // 调试入口
+        if let target = debugOpenTarget {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                switch target {
+                case .guide:   self.openGuide()
+                case .prefs:   self.openPrefs()
+                case .browser: self.openBrowser()
+                }
+                if let path = self.debugRenderTo {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                        self.renderOpenWindows(to: path)
+                    }
+                }
+            }
+        }
     }
 
     func applicationWillTerminate(_ n: Notification) {
@@ -135,6 +159,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.show(content)
     }
 
+    // MARK: 迁移清单
+
+    @objc private func openGuide() {
+        if guide == nil { guide = MigrationGuideWindow(registry: registry) }
+        NSApp.activate(ignoringOtherApps: true)
+        guide?.makeKeyAndOrderFront(nil)
+    }
+
     // MARK: 快捷键面板
 
     @objc private func openBrowser() {
@@ -200,24 +232,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() { NSApp.terminate(nil) }
 
+    /// 把一个窗口的视图树离屏渲染成 PNG。
+    /// 绕过屏幕录制权限：读的是自己的视图缓存，不是显示器内容。
+    func renderOpenWindows(to path: String) {
+        let windows = [guide as NSWindow?, prefs, browser].compactMap { $0 }
+        guard let w = windows.first else {
+            NSLog("[better-macOS] render: no window"); NSApp.terminate(nil); return
+        }
+        // 用户尚未把窗口调出来时（例如窗口是异步打开的），给布局一点时间。
+        w.contentView?.layoutSubtreeIfNeeded()
+        w.layoutIfNeeded()
+        guard let view = w.contentView else {
+            NSLog("[better-macOS] render: no contentView"); NSApp.terminate(nil); return
+        }
+        let size = view.bounds.size
+        guard size.width > 10, size.height > 10 else {
+            guard debugRenderRetries < 3 else {
+                NSLog("[better-macOS] render: giving up (view never laid out)")
+                NSApp.terminate(nil); return
+            }
+            debugRenderRetries += 1
+            NSLog("[better-macOS] render: view too small (%.0fx%.0f), retry %d/3",
+                  size.width, size.height, debugRenderRetries)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.renderOpenWindows(to: path) }
+            return
+        }
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            NSLog("[better-macOS] render: no rep"); NSApp.terminate(nil); return
+        }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        if let data = rep.representation(using: .png, properties: [:]) {
+            try? data.write(to: URL(fileURLWithPath: path))
+            NSLog("[better-macOS] rendered %@ -> %@ (%.0fx%.0f)", w.title, path, size.width, size.height)
+        }
+        NSApp.terminate(nil)
+    }
+
     // MARK: 首次引导
 
-    private func showFirstRunGuidance() {
-        let a = NSAlert()
-        a.messageText = "better-macOS 需要「辅助功能」权限"
-        a.informativeText = """
-        它只做一件事：读取当前 App 的菜单，看看你刚触发了哪个动作。
-
-        它**不会**记录你按了哪些键，也不会把你按了什么发送出去——只读动作名。
-        未授权时，菜单栏图标还在，但什么都不会发生。
-
-        点击「去授权」后，在系统设置里勾选 better-macOS 即可。
-        """
-        a.addButton(withTitle: "去授权")
-        a.addButton(withTitle: "稍后")
-        if a.runModal() == .alertFirstButtonReturn {
-            Permissions.requestAccessibility()
-            Permissions.openAccessibilitySettings()
-        }
-    }
 }
