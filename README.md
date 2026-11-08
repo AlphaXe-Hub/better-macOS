@@ -93,18 +93,22 @@ docs/decisions.md          决策记录
 
 **必须能撤回**：L2 的每个开关都必须能彻底还原到系统默认，否则用户不敢打开。
 
-## 推送（网络受限时）
+## 推送
 
-如果 `github.com:443` 不通（但 `api.github.com` 可用）：
+标准流程：
 
 ```bash
-./scripts/gh-push.py
+git push origin main
 ```
 
-它走 GitHub 的 Git Data API 上传，是标准协议的正确用法，只是绕开被阻断的
-`git-upload-pack` 端点。**注意**：这样推上去的 commit SHA 会和本地不同
-（作者/时间戳差异），但 tree 内容一致；能正常 fetch 后执行
-`git fetch origin && git reset --hard origin/main` 对齐即可。
+如果在某些网络环境下 `github.com:443` 不通而 `api.github.com` 可用，
+可以走 GitHub 的 Git Data API 上传（改 tree 内容而非 packfile）。
+这类脚本属于本机环境的 workaround，**不在本仓库内**——它解决的是你的网络，
+不是项目需要的东西。
+
+**注意**：这样推上去的 commit SHA 会和本地不同（作者/时间戳差异），
+但 tree 内容一致；网络恢复后执行 `git fetch origin && git reset --hard origin/main`
+对齐即可。
 
 ## 自动化
 

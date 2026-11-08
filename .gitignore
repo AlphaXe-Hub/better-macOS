@@ -17,3 +17,10 @@ mc/
 # macOS
 .DS_Store
 ._*
+
+# 并发开发用的 worktree（每个 worker 一个，互不干扰构建）
+.worktrees/
+
+# 本地环境专用的推送脚本：绕开 github.com:443 被阻断的问题。
+# 属于本机网络环境的 workaround，不是项目的一部分。
+scripts/gh-push.py
