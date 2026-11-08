@@ -10,6 +10,11 @@ struct ToastContent {
     let combo: String         // "⌘S"
     let windowsEquivalent: String?  // v2 钩子，v1 恒为 nil
     var sourceApp: String = ""
+    /// 第三行解释（issue #11）。为空时不占位。
+    ///
+    /// 为什么是「第三行小字」而不是把它塞进 `action`：动作名是这一层的主信息，
+    /// 字号和位置都在告诉用户「先看这个」。解释性文案混进标题会让两者都变弱。
+    var note: String = ""
 }
 
 /// 深模块：调用方只说 `show(content)`，不需要知道
@@ -220,6 +225,9 @@ final class ToastView: NSView {
         actionLabel.alignment = .center
         actionLabel.lineBreakMode = .byTruncatingTail
         actionLabel.maximumNumberOfLines = 1
+        actionLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        actionLabel.setContentHuggingPriority(.required, for: .horizontal)
+        pinToUntruncatedWidth(actionLabel)
         stack.addArrangedSubview(actionLabel)
 
         if !content.combo.isEmpty {
@@ -227,6 +235,9 @@ final class ToastView: NSView {
             comboLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
             comboLabel.textColor = .secondaryLabelColor
             comboLabel.alignment = .center
+            // 组合串同理：`fn⌃⌥⇧←` 这种长组合被截断就等于显示错误信息。
+            comboLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+            pinToUntruncatedWidth(comboLabel)
             stack.addArrangedSubview(comboLabel)
         }
 
@@ -237,6 +248,17 @@ final class ToastView: NSView {
             winLabel.textColor = .tertiaryLabelColor
             winLabel.alignment = .center
             stack.addArrangedSubview(winLabel)
+        }
+
+        // 第三行：为什么没有动作名（issue #11）。比 Windows 对照更贴近主信息，
+        // 用 secondary 而不是 tertiary —— 它是解释，不是补充。
+        if !content.note.isEmpty {
+            let noteLabel = NSTextField(wrappingLabelWithString: content.note)
+            noteLabel.font = .systemFont(ofSize: 11, weight: .regular)
+            noteLabel.textColor = .secondaryLabelColor
+            noteLabel.alignment = .center
+            noteLabel.preferredMaxLayoutWidth = 320
+            stack.addArrangedSubview(noteLabel)
         }
 
         NSLayoutConstraint.activate([
@@ -253,6 +275,35 @@ final class ToastView: NSView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    // MARK: 不截断
+
+    /// 让单行 label **真的不截断**（`--render-toast` 抓到过「平铺到左…」）。
+    ///
+    /// 这不是压缩阻力的问题——阻力早就锁到 required 了。真正的坑是
+    /// `NSTextField(labelWithString:)` 的 `intrinsicContentSize` 比**它自己画一遍**
+    /// 所需的宽度窄约 4pt（实测：17pt semibold「平铺到左半屏」
+    /// intrinsic=101.5，`cell.cellSize`=105.1）。Auto Layout 正好把 label 铺到
+    /// 那个 intrinsic 宽度上，于是 cell 在**恰好差一点点**的地方开始省略。
+    /// 「刚好等于 intrinsic」是会被截断的宽度——这与直觉相反，必须显式兜住。
+    ///
+    /// 取 `cellSize`（含 cell 自己的左右内边距）而不是 `attributedStringValue.size()`
+    /// 再手加常数：前者就是 cell 实际拿去画的宽度，改字号时不用改这个函数。
+    static func untruncatedWidth(for label: NSTextField) -> CGFloat? {
+        guard let cell = label.cell else { return nil }
+        let needed = cell.cellSize.width
+        guard needed > 0 else { return nil }
+        // 只要 `ceil`：实测 105.1 铺到 105 仍会省略、铺到 106 就完整，所以
+        // 向上取整正好够。**不要加额外常数**——多出来的 1pt 会把窗口宽度推成
+        // 奇数，而 `HUDController.layout()` 用的 `midX - width/2` 在奇数宽度下
+        // 必然落在 .5 上，端到端 `STACK.CENTERED_X` 就会假红（实测踩过）。
+        return ceil(needed)
+    }
+
+    private func pinToUntruncatedWidth(_ label: NSTextField) {
+        guard let w = Self.untruncatedWidth(for: label) else { return }
+        label.widthAnchor.constraint(greaterThanOrEqualToConstant: w).isActive = true
+    }
 
     override var fittingSize: NSSize {
         let s = super.fittingSize

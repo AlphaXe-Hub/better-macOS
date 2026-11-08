@@ -21,6 +21,7 @@ COMPILE_LOG=$(swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -module-cache-
   -framework AppKit -framework ApplicationServices \
   "$ROOT"/Sources/MenuInventory.swift \
   "$ROOT"/Sources/KeyWatcher.swift \
+  "$ROOT"/Sources/HUDWindow.swift \
   "$ROOT"/Sources/InlineText.swift \
   "$ROOT"/Sources/WindowsEquivalents.swift \
   "$ROOT"/Sources/MigrationCatalog.swift \

@@ -631,6 +631,138 @@ check("演示快照的组合与表里的 macOS 组合完全一致（还原没丢
       Set(demoItems.map(\.combo)) == Set(WindowsEquivalents.allEntries.map(\.macCombo)),
       "差集：\(Set(demoItems.map(\.combo)).symmetricDifference(Set(WindowsEquivalents.allEntries.map(\.macCombo))))")
 
+// MARK: - issue #11：系统级快捷键清单 + 未绑定文案
+
+// 这一层不是 bug，是设计边界。这里测的**不是**「我们能不能看到系统键」，
+// 而是「我们有没有把边界说准」——说错了和报错动作名是同一类错误。
+print("\n[系统级快捷键清单：宁缺勿错]")
+
+check("清单非空", !SystemShortcuts.all.isEmpty)
+check("每条都有出处（拍脑袋的条目不许进表）",
+      SystemShortcuts.all.allSatisfy { !$0.source.isEmpty })
+check("每条都有动作名和分组",
+      SystemShortcuts.all.allSatisfy { !$0.name.isEmpty && !$0.group.isEmpty })
+check("组合不重复（重复会让设置页出现两行同名）",
+      Set(SystemShortcuts.all.map(\.combo)).count == SystemShortcuts.all.count)
+check("分组顺序稳定且不重不漏",
+      SystemShortcuts.grouped().reduce(0) { $0 + $1.entries.count } == SystemShortcuts.all.count)
+
+// 手写数据必须能被产品自己的解析器还原：`parse` 解出来的 (修饰键, 键) 再拼回去，
+// 必须和原字符串一模一样。写成 ⌘⇧Z 这种「看起来对、永远匹配不上」的条目会被这条抓住。
+let unreconstructable = SystemShortcuts.all.map(\.combo).filter { combo in
+    guard let p = SystemShortcuts.parse(combo) else { return true }
+    return p.modifiers.symbols + p.key != combo
+}
+check("每条都能被 parse 还原（顺序与 symbols 一致）",
+      unreconstructable.isEmpty, "还原不了：\(unreconstructable)")
+
+// 符号顺序的**唯一来源**是 ShortcutModifiers.symbols；手写表必须跟它一致。
+check("fn 开头的条目确实带 .function 位",
+      SystemShortcuts.lookup(combo: "fn⌃←") != nil
+        && SystemShortcuts.parse("fn⌃←")?.modifiers.contains(.function) == true)
+check("⌃← 与 fn⌃← 是两条不同的系统键",
+      SystemShortcuts.lookup(combo: "⌃←")?.name != SystemShortcuts.lookup(combo: "fn⌃←")?.name,
+      "⌃←=\(SystemShortcuts.lookup(combo: "⌃←")?.name ?? "nil")  fn⌃←=\(SystemShortcuts.lookup(combo: "fn⌃←")?.name ?? "nil")")
+
+// 这三条是 issue 正文点名的例子，必须在表里且名字对得上。
+check("⌃↑ 是调度中心（issue 正文的例子）",
+      SystemShortcuts.lookup(combo: "⌃↑")?.name == "调度中心")
+check("fn⌃← 在表里（issue 标题里的那个键）",
+      SystemShortcuts.lookup(combo: "fn⌃←")?.name == "平铺到左半屏")
+check("⌘Space 在表里（README 一直写的例子）",
+      SystemShortcuts.lookup(combo: "⌘Space") != nil)
+
+// ★ 反向看门狗：fn← / fn→ / fn↑ / fn↓ **不能**进这张表。
+// Apple 把它们列在 Text-editing shortcuts（由当前 App 处理），不是系统快捷键。
+// 塞进来的后果是：用户在文本编辑器里按 fn←，我们告诉他「这是系统键」——
+// 一句会被当场证伪的解释，比不解释更糟。
+for arrow in ["fn←", "fn→", "fn↑", "fn↓"] {
+    check("\(arrow) 不在系统级清单里（它由当前 App 处理）",
+          SystemShortcuts.lookup(combo: arrow) == nil,
+          "被误收成系统键：\(SystemShortcuts.lookup(combo: arrow)?.name ?? "")")
+}
+
+check("查一个不存在的组合 → nil（不猜）",
+      SystemShortcuts.lookup(combo: "fn⌃⌥⇧⌘J") == nil)
+check("空组合 → nil", SystemShortcuts.lookup(combo: "") == nil)
+
+print("\n[未绑定文案：三类事实必须分开说]")
+
+// 三类 miss 对应三种人话，混成一句就会把人引到错误方向。
+let sysEntry = SystemShortcuts.lookup(combo: "⌃↑")!
+let rSys = ShortcutResolver().resolve(
+    stroke: KeyStroke(key: "↑", modifiers: [.control]),
+    in: MenuInventory.Snapshot(appName: "TestApp", pid: 3, items: []))
+check("系统键的 miss 是 systemReserved",
+      rSys.miss == .systemReserved(sysEntry), "得到 \(String(describing: rSys.miss))")
+check("系统键的标题是它的动作名（不是「未绑定」）",
+      rSys.unboundCopy?.title == "调度中心", "得到 \(rSys.unboundCopy?.title ?? "nil")")
+check("系统键的解释**不写「我们看不到」**（实测有时收得到，写死会被用户证伪）",
+      (rSys.unboundCopy?.note.contains("看不到") ?? true) == false,
+      "得到 \(rSys.unboundCopy?.note ?? "nil")")
+check("系统键的解释说明了「不在 App 菜单里」",
+      rSys.unboundCopy?.note.contains("菜单") == true, "得到 \(rSys.unboundCopy?.note ?? "nil")")
+
+// 菜单里确实没有、又不是系统键 → 只说「这个 App 没绑定」，不许提系统级。
+let rUnbound = ShortcutResolver().resolve(
+    stroke: KeyStroke(key: "J", modifiers: [.control, .option, .shift, .command]),
+    in: MenuInventory.Snapshot(appName: "TestApp", pid: 3, items: []))
+check("没绑定的 miss 是 notBound", rUnbound.miss == .notBound)
+check("没绑定时文案里出现 App 名", rUnbound.unboundCopy?.title == "没有绑定")
+check("没绑定时**不**提系统级（误判成系统级 = 误报动作名同一类错误）",
+      (rUnbound.unboundCopy?.note.contains("系统") ?? true) == false,
+      "得到 \(rUnbound.unboundCopy?.note ?? "nil")")
+
+// 快照缺失 ≠ 这个 App 没绑定。这是「我们还没看到」，不能说成「它不存在」。
+let rNoSnap = ShortcutResolver().resolve(
+    stroke: KeyStroke(key: "S", modifiers: [.command]), in: nil)
+check("无快照的 miss 是 noSnapshot（不是 notBound）",
+      rNoSnap.miss == .noSnapshot, "得到 \(String(describing: rNoSnap.miss))")
+check("无快照时不说「没有绑定」", rNoSnap.unboundCopy?.title != "没有绑定")
+
+// 已经有动作名时不许再给未绑定文案（否则吐司会自相矛盾）
+check("命中动作时不产出未绑定文案", r1.unboundCopy == nil)
+
+print("\n[未绑定时该不该弹：系统键总是说，噪音开关只管没绑定的]")
+
+check("系统键 → 总是弹（否则用户以为工具坏了）",
+      UnboundPolicy.shouldToast(miss: rSys.miss, showUnknown: false))
+check("没绑定 + 开关关 → 不弹（打字噪音）",
+      !UnboundPolicy.shouldToast(miss: rUnbound.miss, showUnknown: false))
+check("没绑定 + 开关开 → 弹",
+      UnboundPolicy.shouldToast(miss: rUnbound.miss, showUnknown: true))
+check("还读不到菜单 → 不弹（没有任何确定信息可说）",
+      !UnboundPolicy.shouldToast(miss: rNoSnap.miss, showUnknown: true))
+check("有动作名 → 不走这条策略",
+      !UnboundPolicy.shouldToast(miss: nil, showUnknown: true))
+
+// MARK: - 吐司不截断（--render-toast 抓到的另一个 bug）
+
+// 背景：`--render-toast` 渲染出来的长动作名「平铺到左半屏」被画成「平铺到左…」。
+// 排查发现**不是压缩阻力的问题**（早就锁到 required 了）：`NSTextField` 的
+// `intrinsicContentSize` 比它自己画一遍所需的 `cell.cellSize` 窄约 4pt，
+// 而 Auto Layout 正好把 label 铺到 intrinsic 宽度上 → 恰好差一点点 → 省略号。
+// `ToastView.untruncatedWidth` 就是为这件事存在的。这条断言锁住它。
+print("\n[吐司动作名不许被截断]")
+
+let probeLabel = NSTextField(labelWithString: "平铺到左半屏")
+probeLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+probeLabel.lineBreakMode = .byTruncatingTail
+probeLabel.maximumNumberOfLines = 1
+if let needed = ToastView.untruncatedWidth(for: probeLabel) {
+    let intrinsic = probeLabel.intrinsicContentSize.width
+    check("untruncatedWidth 比 intrinsic 宽（intrinsic 正好会触发省略号）",
+          needed > intrinsic,
+          "needed=\(needed) intrinsic=\(intrinsic) —— 相等说明又回到会被截断的宽度")
+    check("untruncatedWidth 不小于 cell 自报的绘制宽度",
+          needed >= ceil(probeLabel.cell?.cellSize.width ?? 0),
+          "needed=\(needed) cellSize=\(probeLabel.cell?.cellSize.width ?? 0)")
+} else {
+    check("untruncatedWidth 对正常 label 给出宽度", false, "返回了 nil")
+}
+check("空字符串的 label 也能算出宽度（不崩）",
+      ToastView.untruncatedWidth(for: NSTextField(labelWithString: "")) != nil)
+
 // MARK: - 结果
 
 print("\n" + String(repeating: "─", count: 46))

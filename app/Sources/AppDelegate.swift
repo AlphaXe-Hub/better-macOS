@@ -189,7 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let resolution = resolver.resolve(stroke: stroke, in: lastSnapshot)
         let showUnknown = UserDefaults.standard.object(forKey: "hud.show-unknown") as? Bool ?? false
-        diag("KEY \(stroke.combo)  snapshot=\(lastSnapshot?.appName ?? "NIL")(\(lastSnapshot?.items.count ?? 0)项)  action=\(resolution.action ?? "未绑定")")
+        diag("KEY \(stroke.combo)  snapshot=\(lastSnapshot?.appName ?? "NIL")(\(lastSnapshot?.items.count ?? 0)项)  action=\(resolution.action ?? "未绑定")  miss=\(String(describing: resolution.miss))")
 
         let content: ToastContent
         if let action = resolution.action {
@@ -197,18 +197,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    combo: stroke.combo,
                                    windowsEquivalent: WindowsEquivalents.lookup(combo: stroke.combo, action: action),
                                    sourceApp: resolution.appName)
-        } else if showUnknown {
-            content = ToastContent(action: stroke.combo + " 未绑定菜单动作",
-                                   combo: "",
+        } else if let copy = resolution.unboundCopy,
+                  UnboundPolicy.shouldToast(miss: resolution.miss, showUnknown: showUnknown) {
+            content = ToastContent(action: copy.title,
+                                   combo: stroke.combo,
                                    windowsEquivalent: nil,
-                                   sourceApp: resolution.appName)
+                                   sourceApp: resolution.appName,
+                                   note: copy.note)
         } else {
-            diag("  → 未绑定且 showUnknown=false，不弹")
+            diag("  → 未绑定且当前策略下不弹")
             return   // 规则 3 默认关闭：不解释未绑定键，避免噪音
         }
         hud.show(content)
         diag("  → 吐司已发出: \(content.action)")
     }
+
+    // 未绑定时的弹不弹策略在 UnboundPolicy（KeyWatcher.swift），那里能被单测直接断言。
 
     // MARK: 授权后自愈
 
@@ -376,9 +380,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 用户尚未把窗口调出来时（例如窗口是异步打开的），给布局一点时间。
         w.contentView?.layoutSubtreeIfNeeded()
         w.layoutIfNeeded()
-        guard let view = w.contentView else {
+        guard let root = w.contentView else {
             NSLog("[better-macOS] render: no contentView"); NSApp.terminate(nil); return
         }
+        // 内容是 NSScrollView 时渲染**整篇文档**而不是可视区：设置页随着「系统级
+        // 快捷键清单」变长之后，只拍可视区等于只验证了第一屏，下半部分永远是盲区
+        // （加清单这次就是这样漏掉的）。滚动视图自己的 bounds 不随内容增长。
+        let view: NSView = (root as? NSScrollView)?.documentView ?? root
         let size = view.bounds.size
         guard size.width > 10, size.height > 10 else {
             guard debugRenderRetries < 3 else {
@@ -406,10 +414,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 用真实的 ToastView + fittingSize，所以同时证明「第二行画得出来」和「尺寸把它算进去了」。
     func renderToastSample(to path: String) {
         let action = "保存"
-        let content = ToastContent(action: action,
-                                   combo: "⌘S",
-                                   windowsEquivalent: WindowsEquivalents.lookup(combo: "⌘S", action: action),
-                                   sourceApp: "示例")
+        // 第二类文案（issue #11 第 4 条）：系统级快捷键。带上它，`--render-toast`
+        // 才能留下「我们确实把系统键说清楚了」的版式证据，而不只是一句代码注释。
+        let reserved = SystemShortcuts.lookup(combo: "fn⌃←")
+        let content = ToastContent(action: reserved?.name ?? "平铺到左半屏",
+                                   combo: "fn⌃←",
+                                   windowsEquivalent: nil,
+                                   sourceApp: "示例",
+                                   note: "macOS 系统快捷键 —— 由系统直接处理，不在 App 菜单里")
         let view = ToastView(content: content)
         // 顺序必须和 ToastWindow.init 一致：**先取 fittingSize 再设 frame**。
         // 先 layout 再量会缓存一份零尺寸的布局，长标题会被截断（我踩过）。

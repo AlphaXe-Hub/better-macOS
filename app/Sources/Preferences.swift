@@ -86,10 +86,66 @@ final class PreferencesWindow: NSWindow {
         stack.addArrangedSubview(separator())
         stack.addArrangedSubview(sectionTitle("我们看不到什么"))
         stack.addArrangedSubview(bodyText(
-            "• 系统级快捷键（⌘Space、⇧⌘5、⌘Tab）——macOS 在 App 之前就处理掉了\n" +
+            "• 系统级快捷键（下表）——由 macOS 自己处理，不登记在任何 App 的菜单里\n" +
             "• 没有绑定菜单项的快捷键（App 内部自己处理的按键）\n" +
             "• 用 Carbon 注册的老式全局热键\n\n" +
             "这不是 bug。与其假装什么都能看见，不如把边界说清楚。"))
+        stack.addArrangedSubview(systemShortcutList())
+
+        // ——— 关于 fn ———
+        // 第 ① 层的真 bug 已修（fn 现在会显示在组合里），但用户仍会好奇
+        // 「fn← 到底算什么」。这里给答案，并明确它**不在**系统快捷键表里。
+        stack.addArrangedSubview(separator())
+        stack.addArrangedSubview(sectionTitle("关于 fn（功能键）"))
+        stack.addArrangedSubview(bodyText(
+            "fn 现在会参与组合识别：按 fn⌃← 显示 fn⌃←，按 ⌃← 显示 ⌃←，两者不再混为一谈。\n\n" +
+            "但**我们只负责显示你按了什么，不猜它做了什么**：\n" +
+            "• fn← / fn→ / fn↑ / fn↓ 由当前打开的那个 App 处理（文本编辑里是行首行尾、翻页），\n" +
+            "  所以它们不算系统级快捷键，查不到动作名时我们说「这个 App 没有绑定」。\n" +
+            "• fn 组合不一定是系统键——系统键的判据是**在上面那张清单里**，不是「带 fn」。"))
+    }
+
+    /// 系统级快捷键清单（issue #11 第 5 条）。
+    ///
+    /// 为什么要在设置页里**逐条列出来**，而不是只写一句「有些键我们看不到」：
+    /// 用户的实际问题是「我按了 ⌃↑ 怎么没反应」，一句抽象的免责声明回答不了它。
+    /// 但他能在这张表里**找到 ⌃↑ 并看到它叫什么**——那一刻困惑就消失了。
+    private func systemShortcutList() -> NSView {
+        let box = NSStackView()
+        box.orientation = .vertical
+        box.alignment = .leading
+        box.spacing = 10
+        box.translatesAutoresizingMaskIntoConstraints = false
+
+        for section in SystemShortcuts.grouped() {
+            let head = NSTextField(labelWithString: section.group)
+            head.font = .systemFont(ofSize: 11, weight: .semibold)
+            head.textColor = .labelColor
+            box.addArrangedSubview(head)
+
+            for e in section.entries {
+                let combo = NSTextField(labelWithString: e.combo)
+                combo.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+                combo.textColor = .labelColor
+                combo.setContentHuggingPriority(.required, for: .horizontal)
+                combo.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+
+                let name = NSTextField(labelWithString: e.name)
+                name.font = .systemFont(ofSize: 11)
+                name.textColor = .secondaryLabelColor
+
+                let row = NSStackView(views: [combo, name])
+                row.orientation = .horizontal
+                row.spacing = 12
+                box.addArrangedSubview(row)
+            }
+        }
+
+        let foot = bodyText("出处：Apple 官方快捷键文档（Mac keyboard shortcuts / "
+                            + "Window tiling / Work in multiple spaces）。"
+                            + "完整清单在系统设置里，这里只列迁移中最常撞上的那些。")
+        box.addArrangedSubview(foot)
+        return box
     }
 
     // MARK: 组件
@@ -101,10 +157,12 @@ final class PreferencesWindow: NSWindow {
         return l
     }
 
+    /// 说明文字。走 `InlineText`，所以文案里可以写 `**强调**`——
+    /// 否则星号会原样出现在界面上（`--render` 渲染出来抓到过）。
     private func bodyText(_ s: String) -> NSTextField {
-        let l = NSTextField(wrappingLabelWithString: s)
-        l.font = .systemFont(ofSize: 12)
-        l.textColor = .secondaryLabelColor
+        let font = NSFont.systemFont(ofSize: 12)
+        let l = NSTextField(wrappingLabelWithString: "")
+        l.attributedStringValue = InlineText.attributed(s, font: font, color: .secondaryLabelColor)
         l.preferredMaxLayoutWidth = 500
         return l
     }
