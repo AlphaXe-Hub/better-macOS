@@ -804,6 +804,82 @@ check("还原前的 fn⌃↖ **查不中**任何条目 —— 这正是旧代码
 check("表里没有的 fn 组合仍查不中（不瞎猜）",
       SystemShortcuts.lookup(combo: "fn⇧←") == nil)
 
+// MARK: - 顶排功能键（F1–F12）：给解释，但不编动作名
+
+// Apple《Mac keyboard shortcuts》全文没有 ⌘F1–F12 这一组；F3 的官方写法是
+// Command–Mission Control / Fn-H / Fn-F11。而顶排键当前绑的是媒体/系统功能
+// （亮度、调度中心、音量…），因机而异、可被用户随时改掉 —— 所以只解释，不编动作名。
+print("\n[顶排功能键：确定是系统层，但不确定绑了什么]")
+
+check("F3 被认成功能键", ShortcutResolver.isFunctionKeyCombo(key: "F3"))
+check("F1 和 F12 都是（边界两端）",
+      ShortcutResolver.isFunctionKeyCombo(key: "F1")
+        && ShortcutResolver.isFunctionKeyCombo(key: "F12"))
+check("F0 / F13 不是（不越界）",
+      !ShortcutResolver.isFunctionKeyCombo(key: "F0")
+        && !ShortcutResolver.isFunctionKeyCombo(key: "F13"))
+check("字母 F 不是（不能靠前缀判断）",
+      !ShortcutResolver.isFunctionKeyCombo(key: "F"))
+check("FN / Folder 不是（Int 解析挡住）",
+      !ShortcutResolver.isFunctionKeyCombo(key: "FN")
+        && !ShortcutResolver.isFunctionKeyCombo(key: "Folder"))
+
+// 解析层：三种 fn 状态都归 functionKey（分类只看键位，不看修饰键组合）
+func resolveFnKey(_ key: String, _ mods: ShortcutModifiers) -> ShortcutResolver.Resolution {
+    ShortcutResolver().resolve(stroke: KeyStroke(key: key, modifiers: mods),
+                               in: MenuInventory.Snapshot(appName: "TestApp", pid: 6, items: []))
+}
+for (label, mods) in [("F3", ShortcutModifiers([])),
+                      ("fnF3", [.function]),
+                      ("⌘F3", [.command]),
+                      ("fn⌘F3", [.function, .command]),
+                      ("⌃F3", [.control])] {
+    let r = resolveFnKey("F3", mods)
+    check("\(label) 的 miss 是 functionKey",
+          r.miss == .functionKey, "得到 \(String(describing: r.miss))")
+    check("\(label) 没有动作名（绝不编「显示桌面」——那是可改绑定）", r.action == nil)
+}
+
+let rCmdF3 = resolveFnKey("F3", [.command])
+check("⌘F3 的标题是「功能键组合」",
+      rCmdF3.unboundCopy?.title == "功能键组合", "得到 \(rCmdF3.unboundCopy?.title ?? "nil")")
+check("⌘F3 的解释说明绑定因机而异",
+      rCmdF3.unboundCopy?.note.contains("因机而异") == true,
+      "得到 \(rCmdF3.unboundCopy?.note ?? "nil")")
+check("⌘F3 的解释指向「系统设置 → 键盘 → 键盘快捷键」",
+      rCmdF3.unboundCopy?.note.contains("键盘快捷键") == true,
+      "得到 \(rCmdF3.unboundCopy?.note ?? "nil")")
+check("⌘F3 的解释不说成「这个 App 没绑定」（它不是 App 层的键）",
+      (rCmdF3.unboundCopy?.note.contains("这个 App") ?? true) == false)
+check("⌘F3 总是弹（不受 hud.show-unknown 影响）",
+      UnboundPolicy.shouldToast(miss: rCmdF3.miss, showUnknown: false))
+
+// ★ 回归看门狗：fnF11 有 Apple 出处，必须仍由系统表命中、说「显示桌面」。
+// 顺序是「先精确查表、再判功能键」，所以它不会被 functionKey 抢走。
+let rFnF11 = resolveFnKey("F11", [.function])
+check("fnF11 仍走系统表 → 「显示桌面」（不被 functionKey 抢走）",
+      rFnF11.unboundCopy?.title == "显示桌面",
+      "得到 \(rFnF11.unboundCopy?.title ?? "nil") / \(String(describing: rFnF11.miss))")
+check("fnF11 的 miss 是 systemReserved（不是 functionKey）",
+      rFnF11.miss == .systemReserved(SystemShortcuts.lookup(combo: "fnF11")!))
+
+// 菜单里真绑了 F 键的 App 要优先相信菜单
+let rF3Bound = ShortcutResolver().resolve(
+    stroke: KeyStroke(key: "F3", modifiers: [.command]),
+    in: MenuInventory.Snapshot(appName: "Editor", pid: 7, items: [
+        ShortcutItem(title: "查找下一个", menuGroup: "编辑", key: "F3",
+                     modifiers: [.command], enabled: true),
+    ]))
+check("菜单里绑了 ⌘F3 时以菜单为准（不算功能键）",
+      rF3Bound.action == "查找下一个" && rF3Bound.miss == nil,
+      "得到 \(rF3Bound.action ?? "nil") / \(String(describing: rF3Bound.miss))")
+
+// 三种 fn 状态各自独立计数（combo 字符串不同 → 各自的 Presses）
+check("F3 / fnF3 / ⌘F3 是三个不同的 combo（计数天然分开）",
+      Set([KeyStroke(key: "F3", modifiers: []).combo,
+           KeyStroke(key: "F3", modifiers: [.function]).combo,
+           KeyStroke(key: "F3", modifiers: [.command]).combo]).count == 3)
+
 // MARK: - 不再静默：反复按同一个查不到的组合时解释一次
 
 // 这次 bug 真正伤人的地方不是「查不到」，而是**查不到 + 永远沉默**。

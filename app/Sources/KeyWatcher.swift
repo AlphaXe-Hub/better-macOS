@@ -324,6 +324,7 @@ enum UnboundPolicy {
     /// 每一类的处理刻意不同：
     /// - **系统级**：总是弹。按了 ⌃↑ 没反应，最需要的正是「这是系统键、不是工具坏了」。
     ///   它不会造成打字噪音——系统级组合本来就不会在打字时出现。
+    /// - **顶排功能键**：总是弹，理由同上（F 键组合不可能出现在打字里）。
     /// - **确实没绑定**：跟随 `hud.show-unknown`（默认关）。这是噪音开关。
     /// - **还读不到菜单**：不弹。我们没有任何确定信息可说，弹出来只会增加困惑。
     ///
@@ -340,6 +341,7 @@ enum UnboundPolicy {
                             repeated: Bool = false) -> Bool {
         switch miss {
         case .systemReserved: return true
+        case .functionKey:    return true
         case .notBound:       return showUnknown || repeated
         case .noSnapshot:     return false
         case nil:             return false
@@ -436,6 +438,18 @@ final class ShortcutResolver {
             case notBound
             /// 命中系统级清单：这个键由 macOS 处理，不登记在任何 App 的菜单里。
             case systemReserved(SystemShortcuts.Entry)
+            /// 顶排功能键（F1–F12）：**确定是系统层的东西，但不确定它当前绑了什么**。
+            ///
+            /// 不能并进 `systemReserved`：那张表要求「逐条有 Apple 出处、动作名唯一」，
+            /// 而顶排键恰恰没有唯一答案 —— Apple《Mac keyboard shortcuts》里
+            /// F3 对应的是 `Command–Mission Control` / `Fn-H` / `Fn-F11`，
+            /// **没有** `⌘F3` 这一条。⌘F3 = 显示桌面 是 Mission Control 面板里的
+            /// 一个可改绑定；而且用户当前这台机器的顶排键绑的是一整套媒体/系统功能
+            /// （亮度、调度中心、音量…），因机而异、可被用户随时改掉。
+            ///
+            /// 所以这一类的文案只说「它属于系统层、去系统设置里看」，
+            /// **绝不能编一个动作名** —— 那和报错动作名是同一类错误。
+            case functionKey
             /// 还没读到前台 App 的菜单（无权限 / 冷启动 / 这个进程没有菜单栏）。
             /// **不能归到 notBound**：那会把「我们没看到」说成「它不存在」。
             case noSnapshot
@@ -454,6 +468,11 @@ final class ShortcutResolver {
                 // 写死「看不到」是另一句会被用户当场证伪的话。
                 return UnboundCopy(title: entry.name,
                                    note: "macOS 系统快捷键 —— 由系统直接处理，不在 App 菜单里")
+            case .functionKey:
+                // 说「在哪能查到」，不说「它是什么」——后者因机而异，我们不知道。
+                return UnboundCopy(title: "功能键组合",
+                                   note: "顶排 F 键当前绑定的是系统功能（亮度、调度中心、音量等，因机而异）；"
+                                       + "具体绑定可在「系统设置 → 键盘 → 键盘快捷键」查看")
             case .notBound:
                 let app = appName.isEmpty ? "这个 App" : "「\(appName)」"
                 return UnboundCopy(title: "没有绑定",
@@ -465,6 +484,31 @@ final class ShortcutResolver {
                 return UnboundCopy(title: "没有绑定", note: "")
             }
         }
+    }
+
+    // MARK: 顶排功能键
+
+    /// `F1`…`F12`。
+    ///
+    /// 判据只认**键位是不是功能键**，不限定修饰键：顶排键在「媒体键模式」下
+    /// 发的是系统功能（亮度 / 调度中心 / 音量…），具体绑什么因机而异，
+    /// 带不带 ⌘ 都可能对应某个可改的系统绑定。所以统一一句话解释，
+    /// 而不是逐条猜动作名。
+    ///
+    /// ## 为什么不担心误报
+    ///
+    /// 分类只在**菜单里没绑定**之后才发生（`resolve` 先查菜单）。
+    /// App 自己占了 ⌃F3 / ⌥F3 的（Xcode、IDEA），菜单命中就走正常动作名吐司，
+    /// 根本到不了这里。到得了这里的，本来就是我们查不到出处的组合。
+    ///
+    /// ## 和 `fnF11` 的关系
+    ///
+    /// `fnF11`（显示桌面）**有 Apple 出处**，已经固定在 `SystemShortcuts` 表里。
+    /// `resolve` 的顺序是「先精确查表、再判功能键」，所以它照旧命中表、
+    /// 说「显示桌面」，不会被这一层抢走。
+    static func isFunctionKeyCombo(key: String) -> Bool {
+        guard key.hasPrefix("F"), let n = Int(key.dropFirst()) else { return false }
+        return (1 ... 12).contains(n)
     }
 
     func resolve(stroke: KeyStroke, in snapshot: MenuInventory.Snapshot?) -> Resolution {
@@ -484,9 +528,15 @@ final class ShortcutResolver {
                               miss: nil)
         }
         // 菜单里没有 → 再看是不是系统级。**只精确查表，不做修饰键启发式。**
+        //
+        // 顺序有意义：先查「有出处的系统表」，再判功能键。表里的条目都有
+        // Apple 文档背书、动作名唯一（`fnF11` 就是靠这个顺序保住「显示桌面」的）；
+        // 功能键那一类只是「知道它属于系统层、但不知道绑了什么」。
         let miss: Resolution.Miss
         if let entry = SystemShortcuts.lookup(combo: stroke.combo) {
             miss = .systemReserved(entry)
+        } else if Self.isFunctionKeyCombo(key: stroke.key) {
+            miss = .functionKey
         } else {
             miss = .notBound
         }
