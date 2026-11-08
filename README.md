@@ -37,7 +37,21 @@
 | **冷启动中的 App（前 0.3~5 秒）** | 进程已经在了，但菜单栏还没建好。这期间 AX 返回 `-25204` 但我们读不到东西。会自动重试约 2 秒，更长的窗口期要等你切走再切回来 |
 | **真的卡住的 App** | 等满 2 秒超时后报 `cannotComplete`，不会重试（每次重试都要再等 2 秒）。详见 [docs/ax-electron.md](docs/ax-electron.md) |
 
-## 安装（开发者）
+## 安装
+
+### 普通用户
+
+从 [Releases](https://github.com/AlphaXe-Hub/better-macOS/releases) 下载
+`better-macOS-1.0.0.dmg`，打开后把 `better-macOS` 拖进 `Applications`。
+
+首次启动会引导你授予**辅助功能**权限（必需，否则菜单栏图标在但什么都不会发生）。
+
+> **这个构建没有公证。** macOS 会提示「无法验证开发者」——
+> 请 **右键 App → 打开**，或到「系统设置 → 隐私与安全性」点「仍要打开」。
+> 这是 Apple 对未公证产物的强制拦截，不是程序缺陷。
+> 要彻底消除需要 Developer ID（$99/年），见 [docs/distribution.md](docs/distribution.md)。
+
+### 开发者
 
 需要 macOS 14+、Command Line Tools（**不需要 Xcode.app**，不需要开发者证书）。
 
@@ -78,27 +92,48 @@ cdhash——每重编译一次，系统里的授权就作废，表现是「设�
 ```
 app/
   Sources/
-    MenuInventory.swift    AX 菜单树 → 快捷键模型（深模块：只回答「这个 App 有哪些快捷键」）
-    TriggerObserver.swift  AXMenuItemSelected 观察（深模块：只回答「刚触发了什么」）
-    HUDWindow.swift        吐司（深模块：只有 show()）
-    ShortcutBrowser.swift  快捷键面板
-    ClickCoach.swift       L1 点击教练：CGEventTap + AX 命中菜单项
-    Corrections.swift      L2 修正层：Correction 协议 + 滚动分离实现
-    Preferences.swift      设置窗口
-    AppDelegate.swift      编排（只接线，不含业务逻辑）
-  build.sh                 CLT-only 构建脚本
+    MenuInventory.swift      AX 菜单树 → 快捷键模型（深模块：只回答「这个 App 有哪些快捷键」）
+    KeyWatcher.swift         按键监听 + 反查菜单 + 系统快捷键表（「刚触发了什么」）
+    HUDWindow.swift          吐司（深模块：只有 show()）
+    ShortcutBrowser.swift    快捷键面板
+    ClickCoach.swift         L1 点击教练：CGEventTap + AX 命中菜单项
+    WindowsEquivalents.swift Windows ↔ Mac 键位对照表（24 条高频）
+    Corrections.swift        L2 修正层：Correction 协议 + 注册表
+    OpenFileCorrection.swift L2 第二实现：回车键不再重命名
+    ScrollProbe.swift        滚动事件取证探针（--probe-scroll）
+    MigrationCatalog.swift   迁移清单数据
+    MigrationGuide.swift     迁移清单窗口
+    PermissionGuide.swift    拖拽式辅助功能授权引导
+    Preferences.swift        设置窗口
+    InlineText.swift / Diag.swift / AppContext.swift
+    AppDelegate.swift        编排（只接线，不含业务逻辑）
+  Tests/main.swift           285 项单元自测
+  build.sh                   CLT-only 构建脚本
+  test.sh                    跑自测
+  e2e.sh                     34 项端到端断言（吐司真的在屏幕上）
+  run.sh / repair-permissions.sh / setup-devcert.sh / probe-scroll.sh
   tools/
-    make-icons.swift       源图 → AppIcon.icns / 菜单栏模板图（去噪、裁切、排布）
-    gen-icons.sh           上面那个的调用入口
+    make-icons.swift         源图 → AppIcon.icns / 菜单栏模板图（去噪、裁切、排布）
+    gen-icons.sh             上面那个的调用入口
   Resources/
-    source-app.png         主体图标源图（蓝）
-    source-status.png      菜单栏图标源图（白）
-    AppIcon.icns           生成物，已入库
-    MenuBarIcon*.png       生成物，已入库
-research/                  调研事实（每条带出处）
-docs/decisions.md          决策记录
-docs/click-coach.md        点击教练：为什么只认菜单项、为什么必须用 CGEventTap
+    source-app.png           主体图标源图（蓝）
+    source-status.png        菜单栏图标源图（白）
+    AppIcon.icns             生成物，已入库
+    MenuBarIcon*.png         生成物，已入库
+research/                    调研事实（每条带出处）
+docs/v1-report.md            1.0 交付报告（从这里开始读）
+docs/decisions.md            决策记录
+docs/click-coach.md          点击教练：为什么只认菜单项、为什么必须用 CGEventTap
+docs/ax-electron.md          Electron 系应用的 AX 读取边界
+docs/second-correction.md   第二个修正项的架构验收
+scripts/
+  make-dmg.sh                打 DMG
+  notarize.sh                公证（需 Developer ID）
+  ax-probe/                  issue #6 的取证探针
 ```
+
+> `app/probe-scroll.sh` 与 `scripts/ax-probe/` 是**取证工具，不是产品的一部分**：
+> 它们存在的意义是让「我们说的事实」可以被任何人重新跑一遍验证。
 
 图标不是手工切图，而是由 `app/tools/gen-icons.sh` 从两张 2048px 源图生成。
 因为源图是 AI 出图，背景有 alpha 最高到 32 的压缩噪点，直接缩放会让菜单栏

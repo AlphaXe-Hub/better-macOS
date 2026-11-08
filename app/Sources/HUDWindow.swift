@@ -8,7 +8,7 @@ import CoreGraphics
 struct ToastContent {
     let action: String        // "Save"
     let combo: String         // "⌘S"
-    let windowsEquivalent: String?  // v2 钩子，v1 恒为 nil
+    let windowsEquivalent: String?  // Windows 侧键位，如 "Ctrl+S"；查不到时为 nil
     var sourceApp: String = ""
     /// 第三行解释（issue #11）。为空时不占位。
     ///
@@ -241,7 +241,7 @@ final class ToastView: NSView {
             stack.addArrangedSubview(comboLabel)
         }
 
-        // v2 钩子：有 Windows 对照时显示第二行。v1 永远走不到这里。
+        // 第二行：Windows 对照。查不到时整行不占位——空一行比没有更让人在意。
         if let win = content.windowsEquivalent {
             let winLabel = NSTextField(labelWithString: "Windows: \(win)")
             winLabel.font = .systemFont(ofSize: 11, weight: .regular)
