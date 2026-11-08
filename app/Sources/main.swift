@@ -6,7 +6,10 @@ import AppKit
 // 调试参数（开发期用，不影响正常启动）：
 //   --open-guide    启动后直接打开「迁移清单」
 //   --open-prefs    启动后直接打开设置
-//   --open-browser  启动后直接打开快捷键面板\n//   --open-permission 启动后直接打开权限引导
+//   --open-browser  启动后直接打开快捷键面板
+//   --open-permission 启动后直接打开权限引导
+//   --e2e-toast     吐司端到端自证：合成按键 → 断言窗口真的在 Window Server 屏幕上
+//                   （由 app/e2e.sh 调用；全部 PASS 才 exit 0）
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
@@ -25,6 +28,7 @@ if args.contains("--open-permission") { delegate.debugOpenTarget = .permission }
 
 // issue #3 取证探针：只读观察 scrollWheel 字段，跑完直接退出（见 ScrollProbe.swift）
 if args.contains("--probe-scroll") { exit(ScrollProbe.run(arguments: args)) }
+if args.contains("--e2e-toast") { delegate.debugToastE2E = true }
 
 if let i = args.firstIndex(of: "--render"), i + 1 < args.count {
     delegate.debugRenderTo = args[i + 1]
