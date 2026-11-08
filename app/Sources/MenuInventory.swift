@@ -71,10 +71,21 @@ final class MenuInventory {
 
     enum Failure: Error {
         case noPermission        // -25211 apiDisabled
-        case cannotComplete      // -25204：App 太慢，或没授权时也会出现（实测坑）
+        case cannotComplete      // -25204：App 太慢 / 后台进程没有菜单栏
         case appGone             // -25202 invalidUIElement
-        case noMenuBar           // 成功但拿不到 menuBar（LSUIElement 后台 App）
+        /// 这个进程**本来就没有菜单栏**（后台服务、菜单栏小组件、登录窗口等）。
+        /// -25212 noValue 和 -25208 notImplemented 都归到这里。
+        /// 这**不是错误**，是正常情况——把它当错误报给用户是错的。
+        case noMenuBar
         case other(Int)
+
+        /// 是否是"这个 App 就是没有菜单"这类正常情况（不该弹报错）。
+        var isExpectedNoMenu: Bool {
+            switch self {
+            case .noMenuBar, .cannotComplete: return true
+            default: return false
+            }
+        }
     }
 
     /// 读取失败时返回失败原因——调用方必须能区分
@@ -100,6 +111,9 @@ final class MenuInventory {
         case .apiDisabled:   return .failure(.noPermission)
         case .cannotComplete: return .failure(.cannotComplete)
         case .invalidUIElement: return .failure(.appGone)
+        // 这两个才是"后台进程没有菜单栏"的正常返回值（实测：菜单栏小组件、系统服务）
+        case .noValue, .notImplemented, .attributeUnsupported:
+            return .failure(.noMenuBar)
         default: return .failure(.other(Int(err.rawValue)))
         }
     }

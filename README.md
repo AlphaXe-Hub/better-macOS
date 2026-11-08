@@ -48,6 +48,9 @@
 | **swiftc 必须带 `-target`** | 否则撞上 CLT 里 SDK(6.3.2) 与编译器(6.3.3) 的 arm64e slice 不匹配，报错信息会误导成「SDK 不支持」 |
 | **未授权时 API 返回值会骗人** | `CGEvent.tapCreate` / `addGlobalMonitor` 可能返回非 nil 但零投递。判断权限只能看 `AXIsProcessTrusted()` |
 | **`AXEnabled` 不可靠** | App 里禁用的菜单项，AX 仍可能报 enabled=1。跨 App 场景**做不到**「禁用项变灰」 |
+| **激活通知收不到** | `NSWorkspace.didActivateApplicationNotification` 只在**自己是活跃 App** 时投递。LSUIElement App 永远不是，实测切换 0 条通知 → 必须轮询 `frontmostApplication` |
+| **`-25212`/`-25204` 不是错误** | 后台进程、菜单栏小组件本来就没有菜单栏。把它们当错误报给用户，就会出现「读不到当前 App 清单」的假故障 |
+| **`hidesOnDeactivate` 默认 true** | NSPanel 默认值。accessory App 永远不 active → 面板一创建就自己藏起来，表现为「点了没反应而不报错」 |
 
 ## 结构
 

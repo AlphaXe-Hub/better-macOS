@@ -67,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 全局热键 ⌥⌘K 打开快捷键面板
         installHotKeyMonitor()
+        startPermissionRecovery()
 
         // 调试入口
         if let target = debugOpenTarget {
@@ -167,6 +168,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hud.show(content)
     }
 
+    // MARK: 授权后自愈
+
+    /// 用户很可能在 App 已经运行时才去授权。
+    /// 那一刻 `lastSnapshot` 是失败的，而且不会自己重试——所以必须主动轮询。
+    private var permissionTimer: Timer?
+    private var sawPermission = Permissions.hasAccessibility
+
+    private func startPermissionRecovery() {
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let now = Permissions.hasAccessibility
+            if now && !self.sawPermission {
+                self.sawPermission = true
+                NSLog("[better-macOS] permission became available, re-reading menus")
+                // 重新读一次当前前台 App；之前失败的快照要作废
+                self.lastReadError = nil
+                self.tracker.refresh()
+                if self.lastSnapshot == nil { self.rebind(to: self.tracker.current) }
+            } else if !now && self.sawPermission {
+                self.sawPermission = false
+                NSLog("[better-macOS] permission lost (ad-hoc 重编译会导致)")
+                self.lastSnapshot = nil
+            }
+        }
+    }
+
     // MARK: 迁移清单
 
     @objc private func openGuide() {
@@ -190,6 +217,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: 快捷键面板
 
     @objc private func openBrowser() {
+        // 现场重读一次：用户可能刚授权、或刚切 App，缓存的快照可能是旧的/失败的
+        if Permissions.hasAccessibility, let app = tracker.current,
+           lastSnapshot == nil || lastSnapshot?.pid != app.pid {
+            switch inventory.snapshot(pid: app.pid, appName: app.name) {
+            case .success(let snap):
+                lastSnapshot = snap
+                lastReadError = nil
+            case .failure(let err):
+                lastReadError = err
+            }
+        }
         guard let snapshot = lastSnapshot else {
             let a = NSAlert()
             a.messageText = "读不到当前 App 的菜单"
@@ -206,7 +244,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 a.addButton(withTitle: "好")
                 a.runModal()
             case .noMenuBar:
-                a.informativeText = "这个 App 没有菜单栏（后台 App 或自绘界面）。"
+                a.messageText = "这个 App 没有菜单栏"
+                a.informativeText = "「\(tracker.current?.name ?? "当前 App")」是后台进程或菜单栏小组件，没有可供读取的菜单。\n切到 Safari、Chrome、Finder 这类正常 App 再试。"
                 a.addButton(withTitle: "好")
                 a.runModal()
             case .appGone:

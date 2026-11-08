@@ -46,8 +46,15 @@ enum Permissions {
 
 // MARK: - 前台 App 跟踪
 
-/// 深模块：调用方只问「现在前台是哪个 App」，
-/// 它负责通知订阅、去重、以及把自己排除掉。
+/// 深模块：调用方只问「现在前台是哪个 App」，它负责感知变化、去重、排除自己。
+///
+/// **为什么必须轮询而不是订阅通知**（实测，2026-11-08）：
+/// `NSWorkspace.didActivateApplicationNotification` 只在 App **自己是活跃 App**
+/// 时才会投递。而我们是 `LSUIElement` 菜单栏 App，几乎永远不是活跃 App——
+/// 实测切换 Finder ↔ Chrome 期间，监听器收到 **0 条**通知，而同样的切换
+/// 用轮询 `frontmostApplication` 100% 能拿到。
+///
+/// 这是这个模块存在的全部理由：把「事件不可靠」这件丑陋的事实关在接口后面。
 final class FrontmostAppTracker {
     struct App {
         let pid: pid_t
@@ -56,24 +63,36 @@ final class FrontmostAppTracker {
     }
 
     private(set) var current: App?
-    private var observers: [NSObjectProtocol] = []
+    private var timer: Timer?
     var onChange: ((App?) -> Void)?
+
+    /// 轮询间隔。300ms 在「切换 App 后马上按键」这个场景下够快，
+    /// 而 `frontmostApplication` 是本地 IPC，开销可以忽略。
+    private let interval: TimeInterval = 0.3
 
     func start() {
         refresh()
-        let c = NotificationCenter.default
-        observers.append(c.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
-                                       object: nil, queue: .main) { [weak self] _ in
+        guard timer == nil else { return }
+        timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             self?.refresh()
-        })
-        observers.append(c.addObserver(forName: NSWorkspace.didTerminateApplicationNotification,
-                                       object: nil, queue: .main) { [weak self] _ in
-            self?.refresh()
-        })
+        }
+        RunLoop.main.add(timer!, forMode: .common)
+        // 让计时器在菜单打开、窗口拖动等 RunLoop 模式下也能跑
+        if let t = timer {
+            RunLoop.main.add(t, forMode: .common)
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
     }
 
     func refresh() {
         guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        if ProcessInfo.processInfo.environment["BMAC_DEBUG_TRACKER"] != nil {
+            FileHandle.standardError.write("POLL: \(app.localizedName ?? "?") pid=\(app.processIdentifier)\n".data(using: .utf8)!)
+        }
         let pid = app.processIdentifier
         // 忽略自己：不该给自己弹提示，也不该读自己的菜单。
         guard pid != ProcessInfo.processInfo.processIdentifier else { return }

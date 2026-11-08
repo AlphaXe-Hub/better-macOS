@@ -183,6 +183,16 @@ check("标题出现「拖」字", guideTitle.contains("拖"))
 check("说明里解释了为什么不能用自动授权",
       true)  // 该文案在 Swift 源码里，由 UI 呈现，此处只确保设计意图被记录
 
+// MARK: - 失败分类
+
+print("\n[读菜单失败的分类：正常情况不该当错误报]")
+// -25212 noValue / -25208 notImplemented = 后台进程本来没菜单栏，是正常的
+check("noMenuBar 是预期内的", MenuInventory.Failure.noMenuBar.isExpectedNoMenu)
+check("cannotComplete 也是预期内的（后台服务常见）", MenuInventory.Failure.cannotComplete.isExpectedNoMenu)
+check("noPermission 不是预期内的（要引导授权）", !MenuInventory.Failure.noPermission.isExpectedNoMenu)
+check("appGone 不是预期内的（要提示切 App）", !MenuInventory.Failure.appGone.isExpectedNoMenu)
+check("other 不是预期内的", !MenuInventory.Failure.other(-1).isExpectedNoMenu)
+
 // MARK: - 结果
 
 print("\n" + String(repeating: "─", count: 46))
