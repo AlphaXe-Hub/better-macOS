@@ -50,6 +50,13 @@ final class MigrationGuideWindow: NSPanel {
         contentView = container
 
         let permBar = makePermissionBar()
+        // **必须关掉 autoresizing conversion**：permBar 是唯一不参与布局推导的
+        // 直接子视图，其它子视图都显式设了约束。它的 translatesAutoresizingMask
+        // 一旦保持默认 true，AppKit 就把它当成"已定好尺寸"的视图，于是容器高度
+        // 退化成 permBar 的 intrinsic height —— 实测窗口从 620x640 塌成 620x34，
+        // 外观就是"只看见一行绿色的已授权提示"。这是和设置窗口（issue #10）
+        // 同一类的塌陷，只是触发器不同：一个在 documentView，一个在权限条。
+        permBar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(permBar)
 
         let header = NSTextField(wrappingLabelWithString:
