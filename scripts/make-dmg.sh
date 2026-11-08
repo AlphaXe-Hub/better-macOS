@@ -11,13 +11,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${1:-$ROOT/app/build/better-macOS.app}"
-OUT="${2:-$ROOT/dist/better-macOS.dmg}"
 VOLNAME="better-macOS"
 APP_NAME="$(basename "$APP" .app)"
 
 [ -d "$APP" ] || { echo "✗ 找不到 .app：$APP" >&2; echo "  先跑 ./app/build.sh release" >&2; exit 1; }
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo 0.0.0)"
+
+# 输出名带版本号：用户下载多份时不会互相覆盖，Release 页上也一眼看出是哪个版本。
+# 必须放在 VERSION 解析之后——之前用 ${OUT} 的默认值写死在参数里，拿不到版本。
+OUT="${2:-$ROOT/dist/better-macOS-$VERSION.dmg}"
 mkdir -p "$(dirname "$OUT")"
 [ -e "$OUT" ] && rm -f "$OUT"
 

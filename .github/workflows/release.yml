@@ -76,11 +76,20 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           TEAM_ID: ${{ secrets.TEAM_ID }}
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-        run: ./scripts/notarize.sh dist/better-macOS.dmg
+        run: ./scripts/notarize.sh "$(ls dist/better-macOS-*.dmg | head -1)"
 
       - name: Checksums
         run: |
           cd dist && shasum -a 256 *.dmg | tee SHA256SUMS.txt
+
+      # 文件名带版本号，发布时不能写死 dist/better-macOS.dmg
+      - name: Resolve artifact paths
+        id: paths
+        run: |
+          DMG="$(ls dist/better-macOS-*.dmg | head -1)"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "▶ $DMG"
+          du -h "$DMG"
 
       - name: Upload artifact (永远保留，便于不走 Release 时下载)
         uses: actions/upload-artifact@v4
@@ -97,12 +106,12 @@ jobs:
           draft: ${{ inputs.draft }}
           generate_release_notes: true
           files: |
-            dist/better-macOS.dmg
+            ${{ steps.paths.outputs.dmg }}
             dist/SHA256SUMS.txt
           body: |
             ## 安装
 
-            1. 下载 `better-macOS.dmg`
+            1. 下载本页资产里的 `better-macOS-*.dmg`
             2. 打开，把 `better-macOS` 拖进 `Applications`
             3. 首次启动会引导你授予**辅助功能**权限（必需）
 
