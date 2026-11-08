@@ -93,6 +93,29 @@ docs/decisions.md          决策记录
 
 **必须能撤回**：L2 的每个开关都必须能彻底还原到系统默认，否则用户不敢打开。
 
+## 推送（网络受限时）
+
+如果 `github.com:443` 不通（但 `api.github.com` 可用）：
+
+```bash
+./scripts/gh-push.py
+```
+
+它走 GitHub 的 Git Data API 上传，是标准协议的正确用法，只是绕开被阻断的
+`git-upload-pack` 端点。**注意**：这样推上去的 commit SHA 会和本地不同
+（作者/时间戳差异），但 tree 内容一致；能正常 fetch 后执行
+`git fetch origin && git reset --hard origin/main` 对齐即可。
+
+## 自动化
+
+| Workflow | 触发 | 做什么 |
+|---|---|---|
+| **Build Check** | push / PR | macOS runner 上构建 + 50 项自测 + 产物结构校验（含 `LSUIElement=true`） |
+| **Issue Triage** | issue 新建/编辑 | 自动分类打标签、检查缺陷报告信息完整度、缺什么就回帖说要什么 |
+
+Issue Triage **刻意不做自动改代码**：issue 正文是不可信输入，
+让有仓库写权限的 workflow 去执行其中的指令是危险面。
+
 ## 许可
 
 MIT
