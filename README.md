@@ -17,6 +17,11 @@
 **L1 — 快捷键面板**：⌥⌘K 唤出，列出当前前台 App 的全部快捷键，
 按菜单分组、支持搜索、双击执行。
 
+**L1 — 点击教练**：你用鼠标点菜单里的「文件 → 存储」时，浮出一句「存储 ⌘S」。
+目标是把「点点点」换成快捷键——刚点完的那一刻，是你最需要知道答案的时候。
+同一个动作最多提示 3 次，之后安静。只对**带快捷键的菜单项**生效
+（工具栏按钮没有无障碍标签，教不了，宁可沉默也不猜）。
+
 **L2 — 滚动方向分离**：系统只有一个「自然滚动」开关，鼠标滚轮和触控板被绑在一起。
 打开后，触控板保持自然滚动，鼠标滚轮恢复 Windows 方向——**两者独立**。
 
@@ -77,6 +82,7 @@ app/
     TriggerObserver.swift  AXMenuItemSelected 观察（深模块：只回答「刚触发了什么」）
     HUDWindow.swift        吐司（深模块：只有 show()）
     ShortcutBrowser.swift  快捷键面板
+    ClickCoach.swift       L1 点击教练：CGEventTap + AX 命中菜单项
     Corrections.swift      L2 修正层：Correction 协议 + 滚动分离实现
     Preferences.swift      设置窗口
     AppDelegate.swift      编排（只接线，不含业务逻辑）
@@ -91,6 +97,7 @@ app/
     MenuBarIcon*.png       生成物，已入库
 research/                  调研事实（每条带出处）
 docs/decisions.md          决策记录
+docs/click-coach.md        点击教练：为什么只认菜单项、为什么必须用 CGEventTap
 ```
 
 图标不是手工切图，而是由 `app/tools/gen-icons.sh` 从两张 2048px 源图生成。
@@ -133,7 +140,7 @@ git push origin main
 
 | Workflow | 触发 | 做什么 |
 |---|---|---|
-| **Build Check** | push / PR | macOS runner 上构建 + 208 项自测 + 产物结构校验（含 `LSUIElement=true`、图标资源齐备） |
+| **Build Check** | push / PR | macOS runner 上构建 + 285 项自测 + 产物结构校验（含 `LSUIElement=true`、图标资源齐备） |
 | **Issue Triage** | issue 新建/编辑 | 自动分类打标签、检查缺陷报告信息完整度、缺什么就回帖说要什么 |
 
 Issue Triage **刻意不做自动改代码**：issue 正文是不可信输入，

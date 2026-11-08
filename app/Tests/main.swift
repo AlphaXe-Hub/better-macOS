@@ -970,6 +970,52 @@ if let needed = ToastView.untruncatedWidth(for: probeLabel) {
 check("空字符串的 label 也能算出宽度（不崩）",
       ToastView.untruncatedWidth(for: NSTextField(labelWithString: "")) != nil)
 
+// MARK: - 点击教练：Carbon 位掩码 → 快捷键字符串
+
+// ClickCoach 自己拼组合串（不复用 ShortcutModifiers，因为要的是纯字符串）。
+// 这里逐位验证：**⌘ 是隐含的**，bit3 才表示「没有 ⌘」。
+print("\n[点击教练：组合串]")
+check("0 → ⌘S", ClickCoach.comboString(char: "s", carbonModifiers: 0) == "⌘S",
+      "得到 \(ClickCoach.comboString(char: "s", carbonModifiers: 0))")
+check("1 → ⌘⇧S", ClickCoach.comboString(char: "s", carbonModifiers: 1) == "⌘⇧S",
+      "得到 \(ClickCoach.comboString(char: "s", carbonModifiers: 1))")
+check("2 → ⌘⌥S", ClickCoach.comboString(char: "s", carbonModifiers: 2) == "⌘⌥S",
+      "得到 \(ClickCoach.comboString(char: "s", carbonModifiers: 2))")
+check("4 → ⌘⌃S", ClickCoach.comboString(char: "s", carbonModifiers: 4) == "⌘⌃S",
+      "得到 \(ClickCoach.comboString(char: "s", carbonModifiers: 4))")
+check("8 → 没有 ⌘，只有 S（bit3 = 显式无 ⌘）",
+      ClickCoach.comboString(char: "s", carbonModifiers: 8) == "S",
+      "得到 \(ClickCoach.comboString(char: "s", carbonModifiers: 8))")
+check("12 → ⌃S（⌃ + bit3）",
+      ClickCoach.comboString(char: "s", carbonModifiers: 12) == "⌃S",
+      "得到 \(ClickCoach.comboString(char: "s", carbonModifiers: 12))")
+check("字母统一大写", ClickCoach.comboString(char: "n", carbonModifiers: 0) == "⌘N")
+check("数字原样", ClickCoach.comboString(char: "1", carbonModifiers: 0) == "⌘1")
+check("符号原样（⌘, 是设置）", ClickCoach.comboString(char: ",", carbonModifiers: 0) == "⌘,")
+
+// MARK: - 点击教练：衰减
+
+// 同一个动作最多教 3 次。这个数字是产品判断（通常第 2 次就记住了），
+// 但它必须是个**能被断言的常量**——否则某次重构把它改成 30，
+// 用户会以为工具抽风，而不是发现回归。
+print("\n[点击教练：衰减]")
+check("每个动作最多教 3 次", ClickCoach.maxTeachPerAction == 3,
+      "得到 \(ClickCoach.maxTeachPerAction)")
+check("0..<3 都在阈值内", (0..<3).allSatisfy { $0 < ClickCoach.maxTeachPerAction })
+check("第 4 次（索引 3）已到阈值", !(3 < ClickCoach.maxTeachPerAction))
+
+// 去重键必须区分 App：⌘N 在访达是「新建窗口」、在文本编辑是「新建文档」，
+// 两者共用同一个计数会让其中一个提前失去提示。
+print("\n[点击教练：去重键]")
+let coachFinderLesson = ClickLesson(action: "新建", combo: "⌘N", appName: "访达")
+let coachEditorLesson = ClickLesson(action: "新建", combo: "⌘N", appName: "文本编辑")
+check("不同 App 的同名动作计数分开", coachFinderLesson.key != coachEditorLesson.key,
+      "finder=\(coachFinderLesson.key) editor=\(coachEditorLesson.key)")
+check("同一个动作的键稳定",
+      coachFinderLesson.key == ClickLesson(action: "新建", combo: "⌘N", appName: "访达").key)
+check("键里带 App 名", coachFinderLesson.key.contains("访达"))
+check("键里带动作名", coachFinderLesson.key.contains("新建"))
+
 // MARK: - 结果
 
 print("\n" + String(repeating: "─", count: 46))

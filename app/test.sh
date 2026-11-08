@@ -27,6 +27,7 @@ COMPILE_LOG=$(swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -module-cache-
   "$ROOT"/Sources/MigrationCatalog.swift \
   "$ROOT"/Sources/AppContext.swift \
   "$ROOT"/Sources/Diag.swift \
+  "$ROOT"/Sources/ClickCoach.swift \
   "$ROOT"/Sources/Corrections.swift \
   "$ROOT"/Sources/OpenFileCorrection.swift \
   "$ROOT"/Tests/main.swift \

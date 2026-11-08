@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let resolver = ShortcutResolver()
     private let hud = HUDController()
     private let registry = CorrectionRegistry()
+    private let clickCoach = ClickCoach()
 
     private var prefs: PreferencesWindow?
     private var browser: ShortcutBrowserWindow?
@@ -59,6 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.handleKey(stroke)
         }
         keyWatcher.start()
+
+        // 用户点菜单项 → 教他这件事有快捷键（点击教练）。
+        // 和按键吐司互补：那条是「他已经在用快捷键」，这条是「他还在用鼠标」。
+        clickCoach.onTeach = { [weak self] lesson in
+            self?.handleClickLesson(lesson)
+        }
+        startClickCoachIfEnabled()
 
         // 修正项需要权限时，走统一的拖拽引导
         registry.onNeedPermission = { [weak self] in self?.openPermissionGuide() }
@@ -122,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ n: Notification) {
         keyWatcher.stop()
+        clickCoach.stop()
         for c in registry.corrections where c.isOn { c.disable() }
     }
 
@@ -269,6 +278,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // 未绑定时的弹不弹策略在 UnboundPolicy（KeyWatcher.swift），那里能被单测直接断言。
 
+    // MARK: 点击教练（L1 第三条通道）
+
+    /// 用户用鼠标点了菜单项 → 告诉他这件事有快捷键。
+    ///
+    /// 和按键吐司是**互补**的两条路：
+    /// - 按键吐司：他已经在用快捷键，告诉他刚才那个键叫什么
+    /// - 点击教练：他还在用鼠标，告诉他「你刚做的事有键可按」
+    /// 后者才是迁移期真正需要的那一条。
+    private func handleClickLesson(_ lesson: ClickLesson) {
+        let hudEnabled = UserDefaults.standard.object(forKey: "hud.enabled") as? Bool ?? true
+        guard hudEnabled else { return }
+        let coachEnabled = UserDefaults.standard.object(forKey: "coach.enabled") as? Bool ?? true
+        guard coachEnabled else { return }
+
+        // 复用同一张吐司：动作名（他刚点的菜单项）+ 键位（下次可以不点）。
+        // 第二行放 Windows 对照——迁移用户最需要的是「这个在 Windows 上我按什么」。
+        let content = ToastContent(
+            action: lesson.action,
+            combo: lesson.combo,
+            windowsEquivalent: WindowsEquivalents.lookup(combo: lesson.combo, action: lesson.action),
+            sourceApp: lesson.appName,
+            // 第三行的措辞刻意不用「你应该用快捷键」——那是说教。
+            // 「下次可以试试」把选择权留给用户，也把这一层定位成提示而非命令。
+            note: "下次可以试试键盘"
+        )
+        hud.show(content)
+        diag("  → 点击教练吐司已发出: \(lesson.action) \(lesson.combo)")
+    }
+
+    /// 点击教练的开关变化时重建通道。
+    /// 设置窗口改完开关会调它，权限恢复时也会调。
+    func startClickCoachIfEnabled() {
+        let enabled = UserDefaults.standard.object(forKey: "coach.enabled") as? Bool ?? true
+        guard enabled, Permissions.hasAccessibility else {
+            clickCoach.stop()
+            diag("CLICKCOACH 关闭（enabled=\(enabled) trusted=\(Permissions.hasAccessibility)）")
+            return
+        }
+        clickCoach.start()
+        diag("CLICKCOACH healthy=\(clickCoach.isHealthy)")
+    }
+
     // MARK: 授权后自愈
 
     /// 用户很可能在 App 已经运行时才去授权。
@@ -289,7 +340,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if self.lastSnapshot == nil { self.rebind(to: self.tracker.current) }
                 // 权限生效前装的监听器是无效的（能装但零投递），必须重装
                 self.keyWatcher.start()
-                self.diag("permission granted → key watcher reinstalled")
+                // 点击通道同理：权限到位前 CGEventTap 根本建不出来
+                self.startClickCoachIfEnabled()
+                self.diag("permission granted → key watcher + click coach reinstalled")
             } else if !now && self.sawPermission {
                 self.sawPermission = false
                 NSLog("[better-macOS] permission lost (ad-hoc 重编译会导致)")
@@ -418,6 +471,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if prefs == nil {
             let w = PreferencesWindow(registry: registry)
             w.onRequestPermission = { [weak self] in self?.openPermissionGuide() }
+            w.onCoachSettingChanged = { [weak self] in self?.startClickCoachIfEnabled() }
             prefs = w
         }
         presentWindow(prefs)

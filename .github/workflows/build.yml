@@ -79,6 +79,21 @@ jobs:
       - name: Self tests
         run: ./app/test.sh
 
+      # 点击教练的可执行断言：--click-at 在无菜单展开时应正常退出（非零也算通过，
+      # 因为「这里没有可教的快捷键」本身就是合法结论）。这一步真正防的是：
+      # 入口被误放到 NSApplication 初始化之后 → 进程挂进事件循环不退出。
+      - name: Click coach probe entry
+        run: |
+          set -euo pipefail
+          BIN=app/build/better-macOS.app/Contents/MacOS/better-macOS
+          # 10 秒硬超时：正常应在毫秒级返回
+          OUT=$( ( "$BIN" --click-at 5 5 2>&1 || true ) & CPID=$!
+                 ( sleep 10; kill -9 $CPID 2>/dev/null ) & WPID=$!
+                 wait $CPID 2>/dev/null || true
+                 kill $WPID 2>/dev/null || true )
+          echo "$OUT"
+          echo "$OUT" | grep -q "CLICK-AT" || { echo "✗ --click-at 没有输出判定结果（可能挂住了）"; exit 1; }
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

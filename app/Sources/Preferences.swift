@@ -75,6 +75,17 @@ final class PreferencesWindow: NSWindow {
             "按 ⌥⌘K 打开当前 App 的完整快捷键面板。"))
         stack.addArrangedSubview(hudRow())
 
+        // ——— 点击教练 ———
+        // 单独一节而不是并进「吐司提示」：它是**另一个触发器**（鼠标 vs 键盘），
+        // 用户想关掉噪音时得能分清自己关的是哪一条。
+        stack.addArrangedSubview(sectionTitle("点击教练"))
+        stack.addArrangedSubview(bodyText(
+            "你在菜单里用鼠标点「文件 → 存储」时，浮出一句「存储 ⌘S」。\n" +
+            "目的是把「点点点」换成快捷键——刚点完的那一刻，是你最需要知道答案的时候。\n\n" +
+            "**同一个动作最多提示 3 次**，之后就安静了。只有带快捷键的菜单项会被提示；\n" +
+            "点工具栏按钮、点空白处都不会有任何反应。"))
+        stack.addArrangedSubview(coachRow())
+
         // ——— 修正层 ———
         stack.addArrangedSubview(separator())
         stack.addArrangedSubview(sectionTitle("修正：让 Mac 更像个能干活的地方"))
@@ -207,6 +218,21 @@ final class PreferencesWindow: NSWindow {
         return row
     }
 
+    /// 点击教练开关。默认开——它是这个产品最核心的教学入口，
+    /// 默认关掉等于让用户永远发现不了。
+    private func coachRow() -> NSView {
+        let label = NSTextField(labelWithString: "用鼠标点菜单时提示快捷键")
+        let sw = NSSwitch()
+        sw.state = (UserDefaults.standard.object(forKey: "coach.enabled") as? Bool ?? true) ? .on : .off
+        sw.target = self
+        sw.action = #selector(toggleCoach(_:))
+        let row = NSStackView(views: [label, sw])
+        row.orientation = .horizontal
+        row.distribution = .equalSpacing
+        row.widthAnchor.constraint(equalToConstant: 500).isActive = true
+        return row
+    }
+
     private func correctionRow(_ c: Correction) -> NSView {
         let box = NSView()
         box.translatesAutoresizingMaskIntoConstraints = false
@@ -256,12 +282,22 @@ final class PreferencesWindow: NSWindow {
     /// 由 AppDelegate 注入：打开拖拽式权限引导。
     var onRequestPermission: (() -> Void)?
 
+    /// 由 AppDelegate 注入：点击教练开关变化后重建事件通道。
+    var onCoachSettingChanged: (() -> Void)?
+
     @objc private func openPerms() {
         onRequestPermission?()
     }
 
     @objc private func toggleHUD(_ sender: NSSwitch) {
         UserDefaults.standard.set(sender.state == .on, forKey: "hud.enabled")
+    }
+
+    /// 点击教练开关。改完要**立刻**重建事件通道——只写 UserDefaults 的话，
+    /// 用户关掉开关后点击仍在被监听，直到下次重启才生效，那是能感觉到的 bug。
+    @objc private func toggleCoach(_ sender: NSSwitch) {
+        UserDefaults.standard.set(sender.state == .on, forKey: "coach.enabled")
+        onCoachSettingChanged?()
     }
 
     @objc private func toggleCorrection(_ sender: NSSwitch) {

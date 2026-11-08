@@ -10,6 +10,23 @@ import AppKit
 //   --open-permission 启动后直接打开权限引导
 //   --e2e-toast     吐司端到端自证：合成按键 → 断言窗口真的在 Window Server 屏幕上
 //                   （由 app/e2e.sh 调用；全部 PASS 才 exit 0）
+// 点击教练取证：在指定屏幕坐标跑一次命中判定并打印结果，然后退出。
+// **必须放在 NSApplication 初始化之前**——否则会走完整启动流程，
+// 进程挂在事件循环里不退出（踩过：命令行下去 60 秒还在跑）。
+//   --click-at 210 51
+if let i = CommandLine.arguments.firstIndex(of: "--click-at"),
+   i + 2 < CommandLine.arguments.count,
+   let x = Double(CommandLine.arguments[i + 1]),
+   let y = Double(CommandLine.arguments[i + 2]) {
+    let lesson = ClickCoach.inspect(at: CGPoint(x: x, y: y))
+    if let lesson {
+        print("CLICK-AT (\(Int(x)),\(Int(y))) → app=\(lesson.appName) action=\"\(lesson.action)\" combo=\(lesson.combo)")
+    } else {
+        print("CLICK-AT (\(Int(x)),\(Int(y))) → 没有可教的快捷键")
+    }
+    exit(lesson == nil ? 1 : 0)
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
