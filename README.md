@@ -42,6 +42,16 @@
 首次启动会引导你授予**辅助功能**权限。没有它，菜单栏图标还在但什么都不会发生
 （这是 macOS 的限制，不是 bug）。
 
+### 给开发者的第一步：建一个开发证书
+
+```bash
+./app/setup-devcert.sh    # 只需跑一次
+```
+
+**别跳过这步。** 默认用 ad-hoc 签名，它的 designated requirement 是当次编译的
+cdhash——每重编译一次，系统里的授权就作废，表现是「设置里开关还亮着，但功能全挂」。
+自签名证书让签名身份固定，授权只需一次。这不需要 $99 的开发者账号。
+
 ## 开发时的坑
 
 | 坑 | 说明 |
@@ -53,6 +63,8 @@
 | **激活通知收不到** | `NSWorkspace.didActivateApplicationNotification` 只在**自己是活跃 App** 时投递。LSUIElement App 永远不是，实测切换 0 条通知 → 必须轮询 `frontmostApplication` |
 | **`-25212`/`-25204` 不是错误** | 后台进程、菜单栏小组件本来就没有菜单栏。把它们当错误报给用户，就会出现「读不到当前 App 清单」的假故障 |
 | **`hidesOnDeactivate` 默认 true** | NSPanel 默认值。accessory App 永远不 active → 面板一创建就自己藏起来，表现为「点了没反应而不报错」 |
+| **`AXIsProcessTrusted()` 会撒谎** | 从终端直接跑二进制会**继承终端的授权**返回 true；只有经 `open`/Finder/Dock 启动才是真实状态。调试时用终端跑会得出错误结论 |
+| **ad-hoc 签名 = 授权反复失效** | designated requirement 就是当次 cdhash。跑 `./app/setup-devcert.sh` 建固定签名身份可根治 |
 
 ## 结构
 

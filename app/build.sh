@@ -72,8 +72,20 @@ PLIST
 
 plutil -lint "$APPDIR/Contents/Info.plist" >/dev/null
 
-echo "==> ad-hoc 签名（arm64 未签名无法启动）"
-codesign --force --deep --sign - "$APPDIR" 2>/dev/null
+echo "==> 签名"
+# ad-hoc 签名的问题是：designated requirement 就是当次编译的 cdhash，
+# 每次重编译 TCC 授权都会失效（设置里开关还亮着，API 全挂）。
+# 用固定的自签名证书可以让授权在迭代间保持有效。
+# 证书用 ./app/setup-devcert.sh 创建（不需要 $99 开发者账号）。
+SIGN_ID="${BMAC_SIGN_ID:-better-macOS Dev}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+  codesign --force --deep --sign "$SIGN_ID" "$APPDIR" 2>/dev/null
+  echo "    已用 \"$SIGN_ID\" 签名（授权不会因重编译失效）"
+else
+  codesign --force --deep --sign - "$APPDIR" 2>/dev/null
+  echo "    ⚠️ 未找到 \"$SIGN_ID\"，退回 ad-hoc 签名"
+  echo "       这意味着每次重编译都要重新授权。运行 ./app/setup-devcert.sh 可一次性解决。"
+fi
 codesign -dv "$APPDIR" 2>&1 | grep -E "Signature|Identifier" || true
 
 SIZE=$(du -sh "$APPDIR" | cut -f1)

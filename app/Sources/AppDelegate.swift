@@ -193,6 +193,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.lastReadError = nil
                 self.tracker.refresh()
                 if self.lastSnapshot == nil { self.rebind(to: self.tracker.current) }
+                // 权限生效前装的监听器是无效的（能装但零投递），必须重装
+                self.keyWatcher.start()
+                self.diag("permission granted → key watcher reinstalled")
             } else if !now && self.sawPermission {
                 self.sawPermission = false
                 NSLog("[better-macOS] permission lost (ad-hoc 重编译会导致)")

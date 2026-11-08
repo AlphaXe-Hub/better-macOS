@@ -55,13 +55,16 @@ final class KeyWatcher {
     private var flagsMonitor: Any?
     private(set) var isRunning = false
 
+    /// 装监听器。**可以被重复调用**——授权可能在 start() 之后才生效，
+    /// 那时第一次装的 monitor 是无效的（能装、但零投递），必须能重装。
     func start() {
-        guard keyMonitor == nil else { return }
+        stop()
+        let trusted = AXIsProcessTrusted()
 
         // keyDown：主体的快捷键识别
         keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let stroke = KeyStroke.from(event: event) else { return }
-            // 纯修饰键组合（只按 ⌘）由 flagsChanged 处理，这里只收有主键的
+            Diag.log("RAWKEY \(stroke.combo)")
             self.onKeyDown?(stroke)
         }
 
@@ -71,7 +74,13 @@ final class KeyWatcher {
         }
 
         isRunning = true
-        NSLog("[better-macOS] key watcher started (AXtrusted=%@)", "\(AXIsProcessTrusted())")
+        Diag.log("KEYWATCHER started trusted=\(trusted) keyMonitor=\(keyMonitor != nil ? "ok" : "NIL")")
+        // 实测：直接执行二进制时 AXIsProcessTrusted() 会"继承"终端的授权而返回 true，
+        // 只有经 LaunchServices（open / Finder / Dock）启动才是真实状态。
+        // 所以这个值只能用来判断"用户是否真的授权"，不能用来判断"我的代码对不对"。
+        if !trusted {
+            Diag.log("  ⚠️ 未授权：吐司与快捷键面板都不会工作")
+        }
     }
 
     private(set) var lastFlagsChange: TimeInterval = 0
