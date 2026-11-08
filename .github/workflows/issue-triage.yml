@@ -48,15 +48,19 @@ jobs:
 
             // —— 缺陷相关的领域标签 ——
             // 这些是实测中反复出现的方向，帮助快速定位
+            // 领域标签：用更强的信号词，避免「权限」这类通用词让每个 issue 都被打上。
+            // 每个词表只放「这个领域特有的」说法。
             const areas = [
-              ['area/permission', ['权限', 'permission', '辅助功能', 'accessibility', 'tcc', '授权']],
-              ['area/keywatch',   ['快捷键', 'shortcut', '吐司', 'toast', 'hud', '按键', 'key']],
-              ['area/scroll',     ['滚动', 'scroll', '触控板', 'trackpad', '鼠标', 'mouse']],
-              ['area/menu',       ['菜单', 'menu', '面板', 'panel', '清单', 'inventory']],
-              ['area/build',      ['编译', 'build', 'swiftc', 'xcode', '签名', 'sign', 'cdhash']],
+              ['area/permission', ['辅助功能', 'accessibility', 'tcc', '授权', '拖拽', 'trusted']],
+              ['area/keywatch',   ['吐司', 'toast', 'hud', '按键', 'keydown', '快捷键面板', '监听']],
+              ['area/scroll',     ['滚动', 'scroll', '触控板', 'trackpad', '滚轮', '惯性']],
+              ['area/menu',       ['菜单项', 'menubar', 'axmenubar', '清单读取', '快照']],
+              ['area/build',      ['编译', 'swiftc', 'xcode', 'cdhash', 'designated', '签名']],
             ];
             for (const [label, words] of areas) {
-              if (words.some(w => text.includes(w))) want.add(label);
+              const hits = words.filter(w => text.includes(w)).length;
+              // 至少命中 2 个不同的领域词才算——单个词太容易误中
+              if (hits >= 2) want.add(label);
             }
 
             // —— 移除不可信输入可能造成的问题：只加不删除自己的标签 ——
