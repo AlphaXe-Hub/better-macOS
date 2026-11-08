@@ -1,5 +1,7 @@
 # better-macOS
 
+<img src="docs/assets/icon.png" width="96" align="right" alt="better-macOS 图标">
+
 让 Windows 用户丝滑迁移到 macOS 的菜单栏工具。
 
 > 一个 App · 两层能力
