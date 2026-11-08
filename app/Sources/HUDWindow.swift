@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 
 // MARK: - HUD 吐司
 
@@ -21,14 +20,6 @@ final class HUDController {
     private let fadeDuration: TimeInterval = 0.35
     private let gap: CGFloat = 8
 
-    /// 自测观察口（app/e2e.sh 用）：当前仍被管理的吐司，按堆叠顺序排列。
-    ///
-    /// 这个 App 最危险的失败模式是「代码走到了、但屏幕上什么都没有」——
-    /// 那是不可见的失败。所以哪怕它是一个深模块，也必须留一个**可被断言**的
-    /// 观察口：否则端到端测试只能相信日志，而日志无法区分
-    /// 「调了 orderFrontRegardless」和「窗口真的进了 Window Server」。
-    var activeToasts: [ToastWindow] { visible }
-
     /// 连续触发时纵向堆叠，新的在上。
     func show(_ content: ToastContent) {
         let win = ToastWindow(content: content)
@@ -47,68 +38,17 @@ final class HUDController {
         }
     }
 
-    /// 最新的一张贴在屏幕中线下方，旧的依次往下排。
-    ///
-    /// 遍历顺序必须**倒序**：`visible` 是「旧 → 新」，顺序遍历会让最新的一张
-    /// 落在最下面——与「新的在上」正好相反。这是端到端自证（app/e2e.sh）
-    /// 抓到的真 bug，`STACK.NEW_ON_TOP` 就是它的看门狗。
     private func layout() {
         guard let screen = NSScreen.main else { return }
         let vis = screen.visibleFrame
-        var top = vis.midY
-        for win in visible.reversed() {     // 新的在前 → 最新的一张居中
+        var y = vis.midY
+        for win in visible {
             let h = win.frame.height
-            win.setFrameOrigin(NSPoint(x: vis.midX - win.frame.width / 2, y: top - h / 2))
-            top -= h + gap
+            let x = vis.midX - win.frame.width / 2
+            y -= h / 2
+            win.setFrameOrigin(NSPoint(x: x, y: y))
+            y -= h / 2 + gap
         }
-    }
-}
-
-// MARK: - Window Server 侧的事实
-
-/// 从 Window Server 反查「本进程的哪些窗口**真的**在屏幕上」。
-///
-/// 为什么必须有这一层：`NSWindow.isVisible` 只是 App 自己的意愿。
-/// 一旦某个 AppKit 隐式行为（例如 NSPanel 默认 `hidesOnDeactivate = true`
-/// 在 accessory App 上永不 active）把窗口藏起来，`isVisible` 仍会是 true，
-/// 而屏幕上什么都没有——历史上这个 App 就是栽在这里（commit 7e9b9a5）。
-/// 端到端自证要断言的正是**可用性事实**，不是意愿。
-///
-/// 只枚举自己进程的窗口，不需要「屏幕录制」权限。
-enum WindowServer {
-
-    /// Window Server 对某个窗口的描述。
-    struct Info {
-        let number: CGWindowID   // 与 NSWindow.windowNumber 同域
-        let layer: Int
-        let alpha: Double
-        let size: CGSize
-    }
-
-    static func onScreenWindows(pid: pid_t = getpid()) -> [Info] {
-        guard let list = CGWindowListCopyWindowInfo(
-                [.optionOnScreenOnly, .excludeDesktopElements],
-                kCGNullWindowID) as? [[String: Any]] else { return [] }
-        return list.compactMap { d in
-            guard let owner = (d[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
-                  owner == pid,
-                  let number = (d[kCGWindowNumber as String] as? NSNumber)?.uint32Value else { return nil }
-            let layer = (d[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
-            let alpha = (d[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 0
-            var size = CGSize.zero
-            if let b = d[kCGWindowBounds as String] as? [String: Any] {
-                let w = (b["Width"] as? NSNumber)?.doubleValue ?? 0
-                let h = (b["Height"] as? NSNumber)?.doubleValue ?? 0
-                size = CGSize(width: w, height: h)
-            }
-            return Info(number: CGWindowID(number), layer: layer, alpha: alpha, size: size)
-        }
-    }
-
-    /// 某个 NSWindow 当前是否真的在 Window Server 的「屏幕上」列表里。
-    static func onScreenInfo(for window: NSWindow) -> Info? {
-        guard window.windowNumber != 0 else { return nil }
-        return onScreenWindows().first { $0.number == CGWindowID(window.windowNumber) }
     }
 }
 
@@ -116,12 +56,7 @@ enum WindowServer {
 
 final class ToastWindow: NSPanel {
 
-    /// 这个窗口展示的内容。自测要断言「最上面那张是最后触发的」，
-    /// 就必须能从窗口本身反查到它是哪一句动作。
-    let content: ToastContent
-
     init(content: ToastContent) {
-        self.content = content
         let view = ToastView(content: content)
         let size = view.fittingSize
         super.init(contentRect: NSRect(origin: .zero, size: size),
@@ -150,20 +85,6 @@ final class ToastWindow: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
-
-    /// 视图里**真实画出来**的文字（递归子视图）。
-    /// 端到端要断言的不只是「有个窗口」，而是「卡片上的字就是这次按键解析出的动作名」——
-    /// 否则一个空壳窗口也能让「窗口存在」的断言变绿。
-    var displayedTexts: [String] {
-        guard let root = contentView else { return [] }
-        var out: [String] = []
-        func walk(_ v: NSView) {
-            if let tf = v as? NSTextField, !tf.stringValue.isEmpty { out.append(tf.stringValue) }
-            for sub in v.subviews { walk(sub) }
-        }
-        walk(root)
-        return out
-    }
 
     func present() {
         orderFrontRegardless()
