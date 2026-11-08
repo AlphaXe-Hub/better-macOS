@@ -1,0 +1,135 @@
+name: Issue Triage
+
+# 监听 issue 的创建与编辑，自动做三件事：
+#   1. 按标题/正文关键词打标签（bug / enhancement / question / docs）
+#   2. 用 PR 里同样的门禁做一次「结构检查」（标题格式、复现信息是否齐全）
+#   3. 回帖告诉提交者还缺什么，以及下一步会发生什么
+#
+# 刻意**不**做「自动改代码」——issue 里的文字是不可信输入，
+# 让一个只有 repo 读写权限的 workflow 去执行其中的指令是危险的。
+# 这里只做确定性的分类与提示。
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Classify and label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title || '';
+            const body = issue.body || '';
+            const text = (title + '\n' + body).toLowerCase();
+
+            const want = new Set();
+
+            // —— 类型判定 ——
+            const bugWords = ['bug', '崩溃', 'crash', '不工作', '没反应', '失效', '错误', 'failed', 'error', 'broken', '不生效', '闪退'];
+            const featWords = ['feature', '建议', '希望', '支持', 'enhancement', '能不能', '增加', '新增'];
+            const docWords = ['文档', 'readme', '说明', 'docs', '描述'];
+            const qWords = ['怎么', '如何', 'how to', 'question', '疑问', '为什么'];
+
+            if (bugWords.some(w => text.includes(w))) want.add('bug');
+            if (featWords.some(w => text.includes(w))) want.add('enhancement');
+            if (docWords.some(w => text.includes(w))) want.add('documentation');
+            if (qWords.some(w => text.includes(w))) want.add('question');
+
+            // 一个都没有就标 needs-triage，交给人工
+            if (want.size === 0) want.add('needs-triage');
+
+            // —— 缺陷相关的领域标签 ——
+            // 这些是实测中反复出现的方向，帮助快速定位
+            const areas = [
+              ['area/permission', ['权限', 'permission', '辅助功能', 'accessibility', 'tcc', '授权']],
+              ['area/keywatch',   ['快捷键', 'shortcut', '吐司', 'toast', 'hud', '按键', 'key']],
+              ['area/scroll',     ['滚动', 'scroll', '触控板', 'trackpad', '鼠标', 'mouse']],
+              ['area/menu',       ['菜单', 'menu', '面板', 'panel', '清单', 'inventory']],
+              ['area/build',      ['编译', 'build', 'swiftc', 'xcode', '签名', 'sign', 'cdhash']],
+            ];
+            for (const [label, words] of areas) {
+              if (words.some(w => text.includes(w))) want.add(label);
+            }
+
+            // —— 移除不可信输入可能造成的问题：只加不删除自己的标签 ——
+            const existing = new Set(issue.labels.map(l => typeof l === 'string' ? l : l.name));
+            for (const l of existing) {
+              if (l === 'needs-triage') want.delete(l);
+            }
+
+            const toAdd = [...want].filter(l => !existing.has(l));
+            if (toAdd.length) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: toAdd,
+              });
+            }
+            core.info(`labels added: ${toAdd.join(', ') || '(none)'}`);
+
+      - name: Check report quality
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = (issue.body || '').toLowerCase();
+            const isBug = issue.labels.some(l => (typeof l === 'string' ? l : l.name) === 'bug');
+
+            if (!isBug) return;
+
+            // 缺陷报告的最小信息集。缺什么就说缺什么，不要笼统地让人"补充细节"。
+            const checks = [
+              ['macOS 版本', ['macos', '版本', 'sequoia', 'tahoe', 'sonoma', '26.', '15.', '14.']],
+              ['如何启动',   ['open', '终端', 'terminal', '双击', '启动', 'launch']],
+              ['复现步骤',   ['复现', '步骤', 'reproduce', 'steps', '怎么做', '操作']],
+              ['现象描述',   ['现象', '实际', '期望', 'expected', 'actual', '结果']],
+            ];
+            const missing = checks.filter(([, words]) => !words.some(w => body.includes(w))).map(([n]) => n);
+
+            if (missing.length === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  '感谢报告，信息很完整。',
+                  '',
+                  '自动分类已完成。如果这条和权限有关，请先附上诊断日志：',
+                  '',
+                  '```bash',
+                  'cat ~/Library/Logs/better-macOS.log',
+                  '```',
+                  '',
+                  '这份日志会记录 `KEYWATCHER` / `SNAPSHOT` / `KEY` 全链路，通常能一次定位。',
+                ].join('\n'),
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  '感谢报告。还缺这些信息，补齐后更容易定位：',
+                  '',
+                  ...missing.map(m => `- ${m}`),
+                  '',
+                  '另外，如果是功能不工作，请附上诊断日志——它记录了整条链路：',
+                  '',
+                  '```bash',
+                  'cat ~/Library/Logs/better-macOS.log',
+                  '```',
+                  '',
+                  '> 提示：日志在 `open` 启动时才反映真实权限状态。',
+                  '> 从终端直接执行二进制会继承终端的授权，看到的 `trusted=true` 是假的。',
+                ].join('\n'),
+              });
+            }

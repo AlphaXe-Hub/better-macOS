@@ -1,0 +1,61 @@
+name: Build Check
+
+# 每个 PR 和 main 上的推送都做一次「能不能编译 + 测试过不过」。
+# runner 是 macOS，因为这是个 AppKit 应用，Linux 上连 import 都过不去。
+#
+# 注意：GitHub 的 macOS runner 自带完整 Xcode，和本地「只有 CLT」不同，
+# 所以这里的构建用的是同一份 build.sh——如果它依赖了只有 CLT 才有的行为，
+# 这里会立刻暴露。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          uname -m
+          swift --version
+          xcodebuild -version || true
+
+      - name: Build
+        run: ./app/build.sh release
+
+      - name: Verify app bundle
+        run: |
+          set -euo pipefail
+          APP=app/build/better-macOS.app
+          test -d "$APP" || { echo "no app bundle"; exit 1; }
+          test -x "$APP/Contents/MacOS/better-macOS" || { echo "no executable"; exit 1; }
+          test -f "$APP/Contents/Info.plist" || { echo "no Info.plist"; exit 1; }
+          echo "--- Info.plist ---"
+          plutil -p "$APP/Contents/Info.plist"
+          echo "--- signature ---"
+          codesign -dv "$APP" 2>&1 | head -5
+          echo "--- size ---"
+          du -sh "$APP"
+          # LSUIElement 必须是 true，否则会冒出 Dock 图标
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist")" = "true" \
+            || { echo "LSUIElement must be true"; exit 1; }
+
+      - name: Self tests
+        run: ./app/test.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: better-macOS-app
+          path: app/build/better-macOS.app
+          retention-days: 7
