@@ -22,10 +22,12 @@ COMPILE_LOG=$(swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -module-cache-
   "$ROOT"/Sources/MenuInventory.swift \
   "$ROOT"/Sources/KeyWatcher.swift \
   "$ROOT"/Sources/InlineText.swift \
+  "$ROOT"/Sources/WindowsEquivalents.swift \
   "$ROOT"/Sources/MigrationCatalog.swift \
   "$ROOT"/Sources/AppContext.swift \
   "$ROOT"/Sources/Diag.swift \
   "$ROOT"/Sources/Corrections.swift \
+  "$ROOT"/Sources/OpenFileCorrection.swift \
   "$ROOT"/Tests/main.swift \
   -o "$OUT" 2>&1)
 COMPILE_RC=$?

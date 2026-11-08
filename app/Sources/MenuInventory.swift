@@ -69,9 +69,21 @@ final class MenuInventory {
         }
     }
 
-    enum Failure: Error {
+    /// `Equatable` 是为了让「错误码 → 语义」这个映射能被单测精确断言。
+    enum Failure: Error, Equatable {
         case noPermission        // -25211 apiDisabled
-        case cannotComplete      // -25204：App 太慢 / 后台进程没有菜单栏
+        /// -25204，且**耗时≈messaging timeout**：App 真的忙/无响应。
+        /// 不重试——每次尝试都要再等满 timeout（见 `shouldRetryTimedOut`）。
+        ///
+        /// 名字保留 `cannotComplete`（= 错误码本名），但**语义已收窄**：
+        /// 只代表「真等到超时了」。同样是 -25204、但 0.1ms 就返回的那种，
+        /// 归到下面的 `menuBarNotReady`。
+        case cannotComplete
+        /// -25204，但**0.1ms 就返回**：App 还没建立菜单栏（冷启动中）、
+        /// 或这个进程根本不是 App（crashpad_handler 这类）。
+        /// 实测：飞书冷启动后 0.3~4.7s 内每次都走这条，之后永久成功。
+        /// 把它当「超时」去重试是错的——重试再多次也不会变，得**等**。
+        case menuBarNotReady
         case appGone             // -25202 invalidUIElement
         /// 这个进程**本来就没有菜单栏**（后台服务、菜单栏小组件、登录窗口等）。
         /// -25212 noValue 和 -25208 notImplemented 都归到这里。
@@ -82,40 +94,142 @@ final class MenuInventory {
         /// 是否是"这个 App 就是没有菜单"这类正常情况（不该弹报错）。
         var isExpectedNoMenu: Bool {
             switch self {
-            case .noMenuBar, .cannotComplete: return true
+            case .noMenuBar, .menuBarNotReady: return true
             default: return false
             }
+        }
+
+        /// 是否是**暂时性**失败（稍后可能自己变好）。
+        ///
+        /// 注意：这只是必要条件，不是重试的充分条件——
+        /// `cannotComplete` 是暂时性的，但因为它每次都要等满 timeout，
+        /// 实际策略里**不重试**（见 `MenuInventory.shouldRetryTimedOut`）。
+        var isTransient: Bool {
+            switch self {
+            case .cannotComplete, .menuBarNotReady: return true
+            default: return false
+            }
+        }
+    }
+
+    // MARK: 超时策略
+
+    /// 单个 AX 对象的消息超时。
+    static let messagingTimeout: Float = 2.0
+
+    /// 进程级全局超时。**必须设**，理由见 `installGlobalTimeout()`。
+    static let globalTimeout: Float = 1.0
+
+    /// -25204 的「超时指纹」判定阈值：耗时达到 timeout 的这个比例才算真超时。
+    /// 实测真超时的耗时是 timeout 的 100.0%~100.3%，而冷启动的快速失败是 0.1~0.3ms，
+    /// 两者差了三个数量级，0.5 这个阈值有巨大余量。
+    static let timeoutFingerprintRatio: Double = 0.5
+
+    /// 冷启动 App 的补偿重试退避：0.15 / 0.3 / 0.6 / 1.0 秒（累计约 2.05s）。
+    ///
+    /// **只对 `menuBarNotReady` 且确实是 GUI App 的情况用**。
+    /// 每次尝试只要 0.2ms，重试几乎不花成本。
+    /// 实测飞书冷启动的不可读窗口：0.01s / 0.36s / 0.38s / **4.7s**（首次初始化时）。
+    /// 2s 预算覆盖前三者；4.7s 那种极端情况留给调用方的下一次前台切换补读——
+    /// 在后台队列里死等 5 秒，用户看到的是「切过去半天没反应」，比读到旧数据更糟。
+    static let readyRetryBackoff: [TimeInterval] = [0.15, 0.3, 0.6, 1.0]
+
+    /// `menuBarNotReady` 是否可能是「App 正在冷启动」。
+    ///
+    /// 实测（2026-11-08，微信 4.1）同一个 `-25204` 来自两类完全不同的进程：
+    ///   - 冷启动中的 GUI App：`NSRunningApplication` **存在**（微信主进程 pid 91969）
+    ///   - 根本不是 GUI App 的辅助进程：`NSRunningApplication` 为 **nil**
+    ///     （crashpad_handler pid 91971、WeChatHelper pid 92019 —— 都 0.1ms 返回 -25204）
+    ///
+    /// 这个区分很值钱：对前者重试是**等它好**（有收益）；
+    /// 对后者重试是**白等 2 秒**（实测旧版 165ms 出结果，不区分就变成 2069ms）。
+    /// 后台进程没有菜单栏是**正常情况**，不该让用户为它等两秒。
+    static func couldBeStartingUp(pid: pid_t) -> Bool {
+        NSRunningApplication(processIdentifier: pid) != nil
+    }
+
+    /// `cannotComplete`（真超时）**不重试**。
+    ///
+    /// 反直觉但实测必须如此：每次尝试都要实打实等满 timeout。
+    /// 早先版本对它重试 4 次，实测（SIGSTOP 卡死微信）总耗时 **8886ms**——
+    /// 比修复前的 2000ms 还糟 4 倍。App 真忙的时候，多试几次大概率还是忙。
+    static let shouldRetryTimedOut = false
+
+    private static var didInstallGlobalTimeout = false
+
+    /// `AXUIElementSetMessagingTimeout` **只对设过的那个对象生效，不向子元素继承**。
+    /// 实测（2026-11-08，微信 pid 91969，SIGSTOP 模拟卡死）：
+    ///   - appEl 设 0.5s 后，子元素读标题仍各花 **1500ms**（全局默认 1.5s）
+    ///   - 改用 `AXUIElementCreateSystemWide()` 设 0.5s 后，子元素变成 **503ms**
+    /// 不设的话，App 在「读到菜单栏之后、遍历还没结束」时卡住，
+    /// 就要按 1.5s × 菜单项数量 累加——200 项的 App 能把后台队列钉死 5 分钟。
+    private static func installGlobalTimeout() {
+        guard !didInstallGlobalTimeout else { return }
+        didInstallGlobalTimeout = true
+        // 只影响本进程，不影响别的 App
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), globalTimeout)
+    }
+
+    /// 把一次读取的 (err, 耗时) 翻译成语义。**纯函数，可单测。**
+    ///
+    /// 这是这次修复的核心：`-25204` 一个错误码背了两个完全不同的含义。
+    static func classify(_ err: AXError, elapsed: TimeInterval, timeout: Float) -> Failure? {
+        switch err {
+        case .success:            return nil
+        case .apiDisabled:        return .noPermission
+        case .invalidUIElement:   return .appGone
+        case .noValue, .notImplemented, .attributeUnsupported:
+            return .noMenuBar
+        case .cannotComplete:
+            // 真等到超时了 → App 忙；几乎立刻返回 → 菜单栏还没建好（冷启动）或根本不是 App。
+            let threshold = Double(timeout) * timeoutFingerprintRatio
+            return elapsed >= threshold ? .cannotComplete : .menuBarNotReady
+        default:                  return .other(Int(err.rawValue))
         }
     }
 
     /// 读取失败时返回失败原因——调用方必须能区分
     /// 「这个 App 没有快捷键」和「我们没有权限 / 读不到」。
     func snapshot(pid: pid_t, appName: String) -> Result<Snapshot, Failure> {
+        Self.installGlobalTimeout()
+
+        var lastFailure: Failure = .other(0)
+        for attempt in 0 ... Self.readyRetryBackoff.count {
+            let (result, failure) = read(pid: pid, appName: appName)
+            if let result { return result }
+            lastFailure = failure!
+
+            // 重试只对「便宜且会自己好」的失败有意义：
+            //   - menuBarNotReady：0.2ms 就返回，冷启动中的 App 随时可能就绪 → 值得重试
+            //   - cannotComplete：每次都要等满 timeout，重试 = 成倍拖延 → 不重试
+            //   - noMenuBar / noPermission：再试也不会变 → 不重试
+            let retryable: Bool = {
+                switch lastFailure {
+                case .menuBarNotReady: return Self.couldBeStartingUp(pid: pid)
+                case .cannotComplete:  return Self.shouldRetryTimedOut
+                default:               return false
+                }
+            }()
+            guard retryable, attempt < Self.readyRetryBackoff.count else { break }
+            Thread.sleep(forTimeInterval: Self.readyRetryBackoff[attempt])
+        }
+        return .failure(lastFailure)
+    }
+
+    private func read(pid: pid_t, appName: String) -> (Result<Snapshot, Failure>?, Failure?) {
         let appEl = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appEl, 2.0)
+        AXUIElementSetMessagingTimeout(appEl, Self.messagingTimeout)
 
         var mbRef: CFTypeRef?
-        var err = AXUIElementCopyAttributeValue(appEl, kAXMenuBarAttribute as CFString, &mbRef)
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        let err = AXUIElementCopyAttributeValue(appEl, kAXMenuBarAttribute as CFString, &mbRef)
+        let elapsed = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000_000
 
-        // -25204 在未授权时也会出现（不是只有 -25211），且 App 忙时也会。
-        // 宽限一次重试，把「慢」和「没权限」尽量分开。
-        if err == .cannotComplete {
-            Thread.sleep(forTimeInterval: 0.15)
-            err = AXUIElementCopyAttributeValue(appEl, kAXMenuBarAttribute as CFString, &mbRef)
+        if let failure = Self.classify(err, elapsed: elapsed, timeout: Self.messagingTimeout) {
+            return (nil, failure)
         }
-
-        switch err {
-        case .success:
-            guard let mb = mbRef else { return .failure(.noMenuBar) }
-            return .success(build(mb as! AXUIElement, pid: pid, appName: appName))
-        case .apiDisabled:   return .failure(.noPermission)
-        case .cannotComplete: return .failure(.cannotComplete)
-        case .invalidUIElement: return .failure(.appGone)
-        // 这两个才是"后台进程没有菜单栏"的正常返回值（实测：菜单栏小组件、系统服务）
-        case .noValue, .notImplemented, .attributeUnsupported:
-            return .failure(.noMenuBar)
-        default: return .failure(.other(Int(err.rawValue)))
-        }
+        guard let mb = mbRef else { return (nil, .noMenuBar) }
+        return (.success(build(mb as! AXUIElement, pid: pid, appName: appName)), nil)
     }
 
     private func build(_ menuBar: AXUIElement, pid: pid_t, appName: String) -> Snapshot {

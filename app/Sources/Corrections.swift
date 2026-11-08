@@ -82,7 +82,11 @@ final class ScrollDirectionCorrection: Correction {
 
     init() {
         ScrollDirectionCorrection.live = self
-        isOn = Self.wasEnabled
+        // 注意：**不要**在这里 `isOn = Self.wasEnabled`。
+        // isOn 的语义是「tap 此刻装上了吗」，不是「用户上次开着吗」。
+        // 两者混同会让 restoreSaved() → enable() 撞上
+        // `guard !isOn else { return .success(()) }` 提前返回：
+        // tap 一次都没装，但开关在 UI 上亮着，用户以为开了（issue #3）。
     }
 
     func enable() -> Result<Void, CorrectionError> {
@@ -147,29 +151,11 @@ final class ScrollDirectionCorrection: Correction {
         guard event.type == .scrollWheel else { return event }
         seenScroll += 1
 
-        // 关键判据：连续事件 = 触控板 / Magic Mouse；离散 = 传统滚轮。
+        // 判据与翻转在 ScrollCorrectionMath 里（纯函数，可被自测覆盖）。
         // 触控板**原样返回**，一个字段都不改，所以惯性滚动不受影响。
-        let isContinuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
-        if isContinuous { continuousCount += 1; return event }
+        let decision = ScrollCorrectionMath.decide(event, reverseHorizontal: reverseHorizontal)
+        if !decision.shouldFlip { continuousCount += 1; return event }
         flippedCount += 1
-
-        let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
-        let dx = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
-        let pdy = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
-        let pdx = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)
-        let fdy = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
-        let fdx = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
-
-        // 三组都要翻：只翻 Delta 会让系统反推 PointDelta，从而丢掉平滑滚动。
-        event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: -dy)
-        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: -pdy)
-        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: -fdy)
-
-        if reverseHorizontal {
-            event.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: -dx)
-            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: -pdx)
-            event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: -fdx)
-        }
         return event
     }
 
@@ -191,6 +177,8 @@ final class ScrollDirectionCorrection: Correction {
 
     // 持久化
     private static let key = "correction.scroll.separate-direction.enabled"
+    /// 只由 `enable()` / `disable()` 写入；读取一律走 `restoreSaved()` 的显式判断。
+    /// （`isOn` 才是「现在生效吗」，两者不是一回事——见 `init()` 的注释。）
     private static var wasEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: key) }
         set { UserDefaults.standard.set(newValue, forKey: key) }
@@ -220,15 +208,71 @@ private func scrollTapCallback(proxy: CGEventTapProxy,
     return Unmanaged.passUnretained(event)
 }
 
+// MARK: - 判据与翻转（纯函数，可测）
+
+/// 把「这个滚动事件算不算滚轮、要不要翻」从 event tap 里剥出来。
+///
+/// 放在独立类型里只有一个理由：**判据是 issue #3 的争议核心，必须能被自测覆盖**。
+/// 埋在 event tap 回调里的分支，除了真机手滚没有别的验证手段。
+enum ScrollCorrectionMath {
+
+    /// `kCGScrollWheelEventIsContinuous` 在 CGEventTypes.h 里的编号。
+    /// 探针（ScrollProbe）用同一个字段，这里锁死数值防止哪天读错 field。
+    static let isContinuousFieldRawValue = 88
+
+    struct Decision {
+        /// true = 判为传统滚轮，需要翻转
+        let shouldFlip: Bool
+        /// true = 横向也要翻
+        let flipHorizontal: Bool
+        /// 判据当时的原始字段值，便于诊断
+        let continuous: Int64
+    }
+
+    /// 判定 + 翻转，一步到位（判错就翻错的代价由自测兜住）。
+    /// 返回值带原始字段值，方便调用方计数和诊断。
+    @discardableResult
+    static func decide(_ event: CGEvent, reverseHorizontal: Bool) -> Decision {
+        let continuous = event.getIntegerValueField(
+            CGEventField(rawValue: UInt32(isContinuousFieldRawValue))!)
+        let decision = Decision(shouldFlip: continuous == 0,
+                                flipHorizontal: reverseHorizontal,
+                                continuous: continuous)
+        if decision.shouldFlip { flip(event, horizontal: reverseHorizontal) }
+        return decision
+    }
+
+    /// 三组 delta 一起翻。
+    /// **只翻 Delta 会让系统反推 PointDelta（约 8×），平滑滚动就没了** ——
+    /// 这是 Scroll Reverser 源码注释里明写的坑。
+    static func flip(_ event: CGEvent, horizontal: Bool) {
+        let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
+        let pdy = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
+        let fdy = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1)
+        event.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: -dy)
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: -pdy)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: -fdy)
+
+        guard horizontal else { return }
+        let dx = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
+        let pdx = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)
+        let fdx = event.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2)
+        event.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: -dx)
+        event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: -pdx)
+        event.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: -fdx)
+    }
+}
+
 // MARK: - 修正注册表
 
 /// UI 只跟这一个东西打交道。
 final class CorrectionRegistry {
     private(set) var corrections: [Correction] = []
     let scroll = ScrollDirectionCorrection()
+    let openFile = OpenFileCorrection()
 
     init() {
-        corrections = [scroll]
+        corrections = [scroll, openFile]
     }
 
     func restoreSaved() {

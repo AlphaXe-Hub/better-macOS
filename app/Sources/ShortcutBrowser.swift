@@ -19,6 +19,17 @@ final class ShortcutBrowserWindow: NSPanel {
     struct Row {
         let item: ShortcutItem
         let isHeader: Bool
+        /// 查表结果在这里算一次：视图复用时不重复查，也保证「行有没有第二行」
+        /// 与「行高」用的是同一个判断。
+        var windowsEquivalent: String? = nil
+
+        init(item: ShortcutItem, isHeader: Bool) {
+            self.item = item
+            self.isHeader = isHeader
+            self.windowsEquivalent = isHeader
+                ? nil
+                : WindowsEquivalents.lookup(combo: item.combo, action: item.title)
+        }
     }
 
     init(snapshot: MenuInventory.Snapshot, onFire: @escaping (ShortcutItem) -> Void) {
@@ -115,6 +126,14 @@ final class ShortcutBrowserWindow: NSPanel {
         ])
     }
 
+    /// 调试用（配合 `--render`）：把列表滚到第一条有 Windows 对照的行。
+    /// 真实 App 的快照里，Apple 菜单排在最前面且没有 Windows 对应，
+    /// 不滚一下就看不出第二行的版式。只在开发期渲染路径里调用。
+    func scrollToFirstWindowsEquivalent() {
+        guard let row = filtered.firstIndex(where: { $0.windowsEquivalent != nil }) else { return }
+        tableView.scrollRowToVisible(row)
+    }
+
     func focusSearch() {
         // 每次唤出都回到屏幕中央，避免上次拖到角落后再也找不到
         center()
@@ -142,6 +161,7 @@ final class ShortcutBrowserWindow: NSPanel {
             return i.title.lowercased().contains(query)
                 || i.combo.lowercased().contains(query)
                 || i.menuGroup.lowercased().contains(query)
+                || ($0.windowsEquivalent?.lowercased().contains(query) ?? false)
         }
         tableView.reloadData()
         updateStatus()
@@ -213,25 +233,52 @@ extension ShortcutBrowserWindow: NSTableViewDataSource, NSTableViewDelegate {
         let cell = NSStackView()
         cell.orientation = .horizontal
         cell.spacing = 12
+        cell.alignment = .centerY
 
         let title = NSTextField(labelWithString: r.item.title)
         title.font = .systemFont(ofSize: 13)
         title.lineBreakMode = .byTruncatingTail
         title.textColor = r.item.enabled ? .labelColor : .tertiaryLabelColor
 
+        // 右侧：macOS 组合在上，Windows 对照在下（只有查得到时才画第二行）。
+        // 用竖向 stack 而不是往行高里硬塞，行高由 delegate 统一给，版式不会被撑坏。
+        let keys = NSStackView()
+        keys.orientation = .vertical
+        keys.alignment = .trailing
+        keys.spacing = 0
+
         let combo = NSTextField(labelWithString: r.item.combo)
         combo.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         combo.textColor = r.item.hasShortcut ? .secondaryLabelColor : .quaternaryLabelColor
         combo.alignment = .right
         combo.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        keys.addArrangedSubview(combo)
 
-        cell.addArrangedSubview(title)
-        cell.addArrangedSubview(combo)
+        if let win = r.windowsEquivalent {
+            let winLabel = NSTextField(labelWithString: "Windows: \(win)")
+            winLabel.font = .systemFont(ofSize: 10)
+            winLabel.textColor = .tertiaryLabelColor
+            winLabel.alignment = .right
+            winLabel.lineBreakMode = .byTruncatingTail
+            winLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+            keys.addArrangedSubview(winLabel)
+        }
+
+        // 标题占左侧、键位列钉在右侧：两行（⌘S / Windows: Ctrl+S）在右列右对齐，
+        // 读起来是一个「键位列」，而不是跟着标题文字长度漂移。
+        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cell.addView(title, in: .leading)
+        cell.addView(keys, in: .trailing)
         return cell
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        (row < filtered.count && filtered[row].isHeader) ? 30 : 26
+        guard row < filtered.count else { return 26 }
+        let r = filtered[row]
+        if r.isHeader { return 30 }
+        // 有 Windows 第二行的行加高，避免第二行被裁掉或压到相邻行。
+        return r.windowsEquivalent == nil ? 26 : 40
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {

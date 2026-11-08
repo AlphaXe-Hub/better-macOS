@@ -122,10 +122,7 @@ enum MigrationCatalog {
             title: "回车键打开文件",
             macBehavior: "选中文件按 Enter 是**进入重命名**，会直接编辑文件名。打开要 ⌘O。",
             windowsBehavior: "选中文件按 Enter = 打开。",
-            remedy: .guidance(
-                where_: "系统设置 → 键盘 → 键盘快捷键 → App 快捷键 → 添加",
-                how: "给 Finder 的「打开」加一个 ⌘↵。注意：**没法取消 Enter=重命名**，只能叠加。所以在 Finder 里连按回车仍会改文件名。"
-            ),
+            remedy: .fixable(correctionID: "finder.enter-to-open"),
             verified: true
         ),
         MigrationEntry(

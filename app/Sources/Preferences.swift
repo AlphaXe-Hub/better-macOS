@@ -2,6 +2,13 @@ import AppKit
 
 // MARK: - 偏好设置窗口
 
+/// NSScrollView 的 documentView。
+/// 必须翻转坐标系：非翻转时原点在左下角，内容比可视区高时初始滚动位置会停在
+/// 文档底部（一打开设置就看见最后一段），翻转后才从顶部开始读。
+private final class FlippedDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 /// 用代码搭的偏好设置：一个 AppKit 窗口 + 竖直堆叠的分区。
 /// 不用 SwiftUI 是为了把依赖压到 AppKit 一层（CLT-only 构建更稳），
 /// 且这个界面本来就只有「开关 + 说明」两种元素。
@@ -36,15 +43,24 @@ final class PreferencesWindow: NSWindow {
         stack.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 22, right: 22)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let doc = NSView()
+        let doc = FlippedDocumentView()
         doc.addSubview(stack)
         scroll.documentView = doc
+        // NSScrollView 不会替 documentView 推导尺寸：documentView 默认靠
+        // autoresizing 跟着 clipView 走，一旦转成 Auto Layout，宽度就没有人来给，
+        // 会被算成 0 —— 于是整条约束链在 doc 处断掉，窗口 560x620 实际渲染成
+        // 0x620（外观就是「点设置没有任何窗口出现」）。
+        // 所以这里显式把 doc 的宽度接到 clipView（不是 scrollView：后者含滚动条），
+        // 高度则交给 stack 的内容撑开 —— 故意不钉 doc.bottom，内容比窗口高时才滚得动。
+        doc.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: doc.topAnchor),
             stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
-            doc.widthAnchor.constraint(equalTo: scroll.widthAnchor),
+            doc.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            doc.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
         // ——— 权限状态 ———
