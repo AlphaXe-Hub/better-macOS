@@ -24,6 +24,7 @@ COMPILE_LOG=$(swiftc -O -sdk "$SDK" -target arm64-apple-macos14.0 -module-cache-
   "$ROOT"/Sources/InlineText.swift \
   "$ROOT"/Sources/MigrationCatalog.swift \
   "$ROOT"/Sources/AppContext.swift \
+  "$ROOT"/Sources/Diag.swift \
   "$ROOT"/Sources/Corrections.swift \
   "$ROOT"/Tests/main.swift \
   -o "$OUT" 2>&1)

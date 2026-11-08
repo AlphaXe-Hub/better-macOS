@@ -36,6 +36,8 @@ final class ShortcutBrowserWindow: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         buildRows()
         buildUI()
+        // 不调 center() 会落在屏幕左下角（新建窗口的默认原点）
+        center()
     }
 
     // MARK: 数据
@@ -114,7 +116,10 @@ final class ShortcutBrowserWindow: NSPanel {
     }
 
     func focusSearch() {
+        // 每次唤出都回到屏幕中央，避免上次拖到角落后再也找不到
+        center()
         makeKeyAndOrderFront(nil)
+        orderFrontRegardless()
         makeFirstResponder(searchField)
     }
 

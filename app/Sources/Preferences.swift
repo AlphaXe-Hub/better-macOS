@@ -17,6 +17,8 @@ final class PreferencesWindow: NSWindow {
                    backing: .buffered, defer: false)
         title = "better-macOS"
         isReleasedWhenClosed = false
+        level = .floating              // 和其他窗口一致，不会被别的 App 盖住
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         center()
         buildUI()
     }

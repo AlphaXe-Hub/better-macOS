@@ -113,6 +113,7 @@ final class ScrollDirectionCorrection: Correction {
         isOn = true
         Self.wasEnabled = true
         NSLog("[better-macOS] scroll correction ON")
+        Diag.log("SCROLL correction ON (tap installed)")
         return .success(())
     }
 
@@ -129,6 +130,7 @@ final class ScrollDirectionCorrection: Correction {
         isOn = false
         Self.wasEnabled = false
         NSLog("[better-macOS] scroll correction OFF")
+        Diag.log("SCROLL correction OFF")
     }
 
     func setOption(_ id: String, value: Double) {
@@ -136,13 +138,20 @@ final class ScrollDirectionCorrection: Correction {
     }
 
     /// 事件回调：O(1)、不分配、不加锁——否则会被系统判定超时停掉。
+    /// 诊断计数（供 /tmp 日志与设置页显示）
+    private(set) var seenScroll = 0
+    private(set) var flippedCount = 0
+    private(set) var continuousCount = 0
+
     fileprivate func handle(event: CGEvent) -> CGEvent? {
         guard event.type == .scrollWheel else { return event }
+        seenScroll += 1
 
         // 关键判据：连续事件 = 触控板 / Magic Mouse；离散 = 传统滚轮。
         // 触控板**原样返回**，一个字段都不改，所以惯性滚动不受影响。
         let isContinuous = event.getIntegerValueField(.scrollWheelEventIsContinuous) != 0
-        if isContinuous { return event }
+        if isContinuous { continuousCount += 1; return event }
+        flippedCount += 1
 
         let dy = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
         let dx = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)

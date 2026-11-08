@@ -124,10 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.lastSnapshot = snap
                     self.lastReadError = nil
                     NSLog("[better-macOS] %@: %d shortcuts", snap.appName, snap.withShortcuts.count)
+                    self.diag("SNAPSHOT \(snap.appName) items=\(snap.items.count) withKeys=\(snap.withShortcuts.count)")
                 case .failure(let err):
                     self.lastSnapshot = nil
                     self.lastReadError = err
                     NSLog("[better-macOS] read menu of %@ failed: %@", app.name, String(describing: err))
+                    self.diag("SNAPSHOT-FAIL \(app.name): \(String(describing: err))")
                 }
             }
         }
@@ -141,6 +143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 3. **有修饰键但没绑定菜单的，弹一句「未绑定」**——
     ///    对迁移者来说「我按了但没反应」是最需要解释的状态，
     ///    而这正是 Windows 肌肉记忆落空的时刻。
+    func diag(_ msg: String) { Diag.log(msg) }
+
     private func handleKey(_ stroke: KeyStroke) {
         let hudEnabled = UserDefaults.standard.object(forKey: "hud.enabled") as? Bool ?? true
         guard hudEnabled else { return }
@@ -150,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let resolution = resolver.resolve(stroke: stroke, in: lastSnapshot)
         let showUnknown = UserDefaults.standard.object(forKey: "hud.show-unknown") as? Bool ?? false
+        diag("KEY \(stroke.combo)  snapshot=\(lastSnapshot?.appName ?? "NIL")(\(lastSnapshot?.items.count ?? 0)项)  action=\(resolution.action ?? "未绑定")")
 
         let content: ToastContent
         if let action = resolution.action {
@@ -163,9 +168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    windowsEquivalent: nil,
                                    sourceApp: resolution.appName)
         } else {
+            diag("  → 未绑定且 showUnknown=false，不弹")
             return   // 规则 3 默认关闭：不解释未绑定键，避免噪音
         }
         hud.show(content)
+        diag("  → 吐司已发出: \(content.action)")
     }
 
     // MARK: 授权后自愈
