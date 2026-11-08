@@ -45,7 +45,17 @@ echo "==> 资源"
 if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
   cp "$ROOT/Resources/AppIcon.icns" "$APPDIR/Contents/Resources/AppIcon.icns"
   echo "    已嵌入 AppIcon.icns"
+else
+  echo "    ⚠️ 缺少 Resources/AppIcon.icns（用 ./app/tools/gen-icons.sh 生成）"
 fi
+for f in MenuBarIcon.png MenuBarIcon@2x.png; do
+  if [ -f "$ROOT/Resources/$f" ]; then
+    cp "$ROOT/Resources/$f" "$APPDIR/Contents/Resources/$f"
+    echo "    已嵌入 $f"
+  else
+    echo "    ⚠️ 缺少 Resources/$f，菜单栏会退回系统符号 keyboard"
+  fi
+done
 
 echo "==> Info.plist"
 cat > "$APPDIR/Contents/Info.plist" <<PLIST

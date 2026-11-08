@@ -81,9 +81,26 @@ app/
     Preferences.swift      设置窗口
     AppDelegate.swift      编排（只接线，不含业务逻辑）
   build.sh                 CLT-only 构建脚本
+  tools/
+    make-icons.swift       源图 → AppIcon.icns / 菜单栏模板图（去噪、裁切、排布）
+    gen-icons.sh           上面那个的调用入口
+  Resources/
+    source-app.png         主体图标源图（蓝）
+    source-status.png      菜单栏图标源图（白）
+    AppIcon.icns           生成物，已入库
+    MenuBarIcon*.png       生成物，已入库
 research/                  调研事实（每条带出处）
 docs/decisions.md          决策记录
 ```
+
+图标不是手工切图，而是由 `app/tools/gen-icons.sh` 从两张 2048px 源图生成。
+因为源图是 AI 出图，背景有 alpha 最高到 32 的压缩噪点，直接缩放会让菜单栏
+模板图带一圈脏边；而且字形只占画布 58%×83%，不按包围盒重排会又偏又小。
+脚本做的事：连通域去噪 → 按字形包围盒裁切 → 排进 macOS 图标网格（824/1024
+超椭圆底板）→ 导出 10 档 iconset → `iconutil` 打包。
+
+菜单栏图是**模板图**（`isTemplate = true`）：只存 alpha，颜色由系统按菜单栏
+明暗自动染成黑或白。所以源图虽然是纯白，深色菜单栏下也不会变成一块白方块。
 
 ## 设计原则
 
@@ -116,7 +133,7 @@ git push origin main
 
 | Workflow | 触发 | 做什么 |
 |---|---|---|
-| **Build Check** | push / PR | macOS runner 上构建 + 50 项自测 + 产物结构校验（含 `LSUIElement=true`） |
+| **Build Check** | push / PR | macOS runner 上构建 + 208 项自测 + 产物结构校验（含 `LSUIElement=true`、图标资源齐备） |
 | **Issue Triage** | issue 新建/编辑 | 自动分类打标签、检查缺陷报告信息完整度、缺什么就回帖说要什么 |
 
 Issue Triage **刻意不做自动改代码**：issue 正文是不可信输入，

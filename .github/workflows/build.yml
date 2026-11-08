@@ -53,6 +53,29 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$APP/Contents/Info.plist")" = "true" \
             || { echo "LSUIElement must be true"; exit 1; }
 
+          # 图标资源：CFBundleIconFile 指的文件必须真的在包里，否则 Finder/Dock
+          # 会静默退回默认图标——这类回归不会让任何测试变红，只能在打包后查。
+          ICON_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$APP/Contents/Info.plist")"
+          test -n "$ICON_NAME" || { echo "CFBundleIconFile is empty"; exit 1; }
+          test -f "$APP/Contents/Resources/${ICON_NAME}.icns" \
+            || { echo "missing AppIcon: ${ICON_NAME}.icns"; exit 1; }
+          for f in MenuBarIcon.png MenuBarIcon@2x.png; do
+            test -f "$APP/Contents/Resources/$f" || { echo "missing $f"; exit 1; }
+          done
+          echo "--- icons ---"
+          ls -lh "$APP/Contents/Resources"
+          # 菜单栏图必须是模板图可用形态：有 alpha 通道、而且不是全不透明
+          python3 - "$APP/Contents/Resources/MenuBarIcon@2x.png" <<'PY'
+          import struct, sys, zlib
+          p = sys.argv[1]
+          d = open(p, 'rb').read()
+          assert d[:8] == b'\x89PNG\r\n\x1a\n', "not a PNG"
+          w, h = struct.unpack('>II', d[16:24])
+          bitdepth, colortype = d[24], d[25]
+          assert colortype == 6, f"menu bar icon must be RGBA, got colortype {colortype}"
+          print(f"menu bar icon {w}x{h} RGBA bitdepth={bitdepth}")
+          PY
+
       - name: Self tests
         run: ./app/test.sh
 

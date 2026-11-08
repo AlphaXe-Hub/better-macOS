@@ -130,7 +130,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "better-macOS")
+            button.image = Self.statusBarImage()
+            // 模板图：系统按菜单栏明暗自动染成黑/白。少了这一行，
+            // 深色菜单栏下白色图标会变成一块糊掉的方块。
             button.image?.isTemplate = true
         }
         let menu = NSMenu()
@@ -142,6 +144,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "退出 better-macOS", action: #selector(quit), keyEquivalent: "q")
         for item in menu.items { item.target = self }
         statusItem.menu = menu
+    }
+
+    /// 菜单栏图标。优先用 bundle 里的 MenuBarIcon（由 app/tools/gen-icons.sh 生成），
+    /// 缺失时退回系统符号——直接用 SF Symbol 会在 Dock 与菜单栏之间产生视觉断层，
+    /// 所以它只是兜底，不是正常路径。
+    private static func statusBarImage() -> NSImage? {
+        // 不要改 size：@1x 是 13x18 pt，正好是菜单栏该有的尺寸。
+        // 之前按宽高比重设 size，把 18pt 的画布放大成 22pt，图标会被菜单栏切掉。
+        if let img = NSImage(named: "MenuBarIcon") {
+            img.isTemplate = true
+            return img
+        }
+        let fallback = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "better-macOS")
+        fallback?.isTemplate = true
+        return fallback
     }
 
     // MARK: 前台 App 绑定
@@ -413,7 +430,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 把一张带 Windows 对照的吐司离屏渲染成 PNG。
     /// 用真实的 ToastView + fittingSize，所以同时证明「第二行画得出来」和「尺寸把它算进去了」。
     func renderToastSample(to path: String) {
-        let action = "保存"
         // 第二类文案（issue #11 第 4 条）：系统级快捷键。带上它，`--render-toast`
         // 才能留下「我们确实把系统键说清楚了」的版式证据，而不只是一句代码注释。
         let reserved = SystemShortcuts.lookup(combo: "fn⌃←")
