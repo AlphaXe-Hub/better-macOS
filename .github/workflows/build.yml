@@ -86,13 +86,23 @@ jobs:
         run: |
           set -euo pipefail
           BIN=app/build/better-macOS.app/Contents/MacOS/better-macOS
-          # 10 秒硬超时：正常应在毫秒级返回
-          OUT=$( ( "$BIN" --click-at 5 5 2>&1 || true ) & CPID=$!
-                 ( sleep 10; kill -9 $CPID 2>/dev/null ) & WPID=$!
-                 wait $CPID 2>/dev/null || true
-                 kill $WPID 2>/dev/null || true )
-          echo "$OUT"
-          echo "$OUT" | grep -q "CLICK-AT" || { echo "✗ --click-at 没有输出判定结果（可能挂住了）"; exit 1; }
+          OUT=/tmp/clickat.txt
+          # 先重定向到文件再轮询，不要用 $( ) 接后台进程——
+          # 命令替换会等待子 shell 里**所有**后台任务，超时分支会白等满 10 秒。
+          # （第一版就是这么写的，CI 日志里多耗了 10 秒。）
+          "$BIN" --click-at 5 5 > "$OUT" 2>&1 &
+          CPID=$!
+          for _ in $(seq 1 50); do
+            kill -0 "$CPID" 2>/dev/null || break
+            sleep 0.2
+          done
+          if kill -0 "$CPID" 2>/dev/null; then
+            kill -9 "$CPID" 2>/dev/null || true
+            echo "✗ --click-at 10 秒内没有退出（入口可能被放到了 NSApplication 初始化之后）"
+            exit 1
+          fi
+          cat "$OUT"
+          grep -q "CLICK-AT" "$OUT" || { echo "✗ --click-at 没有输出判定结果"; exit 1; }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
